@@ -23,8 +23,12 @@ final class UsageViewModel {
     private(set) var isRefreshing = false
 
     private let service = UsageService()
-    private var pollTask: Task<Void, Never>?
-    private var wakeObserver: NSObjectProtocol?
+    // `nonisolated(unsafe)` so `deinit` (always nonisolated for a class, without the
+    // still-experimental `isolated deinit` feature) can tear them down directly.
+    // Safe here: `Task.cancel()` and `NotificationCenter.removeObserver` are both
+    // documented thread-safe, and nothing else touches these outside `@MainActor`.
+    nonisolated(unsafe) private var pollTask: Task<Void, Never>?
+    nonisolated(unsafe) private var wakeObserver: NSObjectProtocol?
     private let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "UsageViewModel")
 
     private static let didApplyDefaultLaunchAtLoginKey = "didApplyDefaultLaunchAtLogin"
@@ -139,7 +143,7 @@ final class UsageViewModel {
         }
     }
 
-    isolated deinit {
+    deinit {
         pollTask?.cancel()
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
