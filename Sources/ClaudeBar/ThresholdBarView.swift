@@ -46,6 +46,11 @@ struct ThresholdBarView: View {
                         .accessibilityLabel("Critical threshold")
                         .accessibilityValue("\(Int(criticalPercent)) percent")
                 }
+                // Handles are offset within the ZStack, so a gesture attached to a
+                // handle needs a coordinate space anchored to the static track —
+                // otherwise `.local` resolves relative to the moving handle itself
+                // and dragging jumps to the far left.
+                .coordinateSpace(name: "bar")
             }
             .frame(height: handleSize)
 
@@ -71,7 +76,7 @@ struct ThresholdBarView: View {
     }
 
     private func dragGesture(width: CGFloat, apply: @escaping (Double) -> Void) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("bar"))
             .onChanged { value in
                 let percent = (value.location.x / width * 100).rounded()
                 apply(min(max(percent, 1), 100))

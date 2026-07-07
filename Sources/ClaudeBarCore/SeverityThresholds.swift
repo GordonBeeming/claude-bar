@@ -5,22 +5,20 @@ import Foundation
 public struct SeverityThresholds: Sendable, Equatable {
     public var useClaudeSeverity: Bool
 
-    // Clamped on every write (not just at init) so a caller assigning an
-    // out-of-range value directly — e.g. a settings text field mid-edit — can never
-    // produce a threshold `resolve` would misbehave on.
+    // Backed by a private stored property so clamping happens in the setter rather
+    // than a self-mutating `didSet` — a caller assigning an out-of-range value
+    // directly (e.g. a settings text field mid-edit) can never produce a threshold
+    // `resolve` would misbehave on.
+    private var _warningPercent: Double
     public var warningPercent: Double {
-        didSet {
-            let clamped = Self.clamp(warningPercent)
-            // didSet fires unconditionally on assignment, so guard the no-op case —
-            // otherwise re-assigning the already-clamped value recurses forever.
-            if clamped != warningPercent { warningPercent = clamped }
-        }
+        get { _warningPercent }
+        set { _warningPercent = Self.clamp(newValue) }
     }
+
+    private var _criticalPercent: Double
     public var criticalPercent: Double {
-        didSet {
-            let clamped = Self.clamp(criticalPercent)
-            if clamped != criticalPercent { criticalPercent = clamped }
-        }
+        get { _criticalPercent }
+        set { _criticalPercent = Self.clamp(newValue) }
     }
 
     public init(
@@ -29,8 +27,8 @@ public struct SeverityThresholds: Sendable, Equatable {
         criticalPercent: Double = 90
     ) {
         self.useClaudeSeverity = useClaudeSeverity
-        self.warningPercent = Self.clamp(warningPercent)
-        self.criticalPercent = Self.clamp(criticalPercent)
+        self._warningPercent = Self.clamp(warningPercent)
+        self._criticalPercent = Self.clamp(criticalPercent)
     }
 
     public func resolve(for limit: UsageLimit) -> Severity {
