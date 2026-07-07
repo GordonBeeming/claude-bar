@@ -7,9 +7,15 @@ A tiny macOS menu bar app that shows my Claude usage limits: session, weekly, an
 - macOS 15+
 - Claude Code installed and logged in
 
-ClaudeBar reads the Claude Code OAuth token straight out of the macOS Keychain. It never writes to it or refreshes the token; that's Claude Code's job. If the token has expired, ClaudeBar shows a hint to re-run `claude` and log in again rather than failing silently.
+ClaudeBar reads the Claude Code OAuth token straight out of the macOS Keychain. It never writes to it or refreshes the token; that's Claude Code's job. If the token has expired, ClaudeBar keeps showing the last known numbers with a hint to open Claude Code (which refreshes the token as it runs) rather than failing silently.
 
 ## Install
+
+```
+brew install --cask gordonbeeming/tap/claude-bar
+```
+
+### From source
 
 ```
 make install
@@ -41,3 +47,7 @@ Toggle "Launch at Login" from the menu bar item. ClaudeBar runs as an accessory 
 ClaudeBar calls `GET https://api.anthropic.com/api/oauth/usage` with the OAuth token from Keychain, then renders the `limits` array it gets back — one entry per scope (session, weekly, per-model), each with a percentage used and a reset time. Reset times are converted from UTC to your system timezone before display.
 
 There's no polling loop hammering the API — it refreshes on click and on a light background interval, and always shows the last good value while a refresh is in flight.
+
+## Releasing
+
+Push a `vX.Y` tag and publish a GitHub release for it. CI signs, notarizes, and uploads the DMG, then updates the Homebrew tap so `brew upgrade --cask claude-bar` picks up the new version.

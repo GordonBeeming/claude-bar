@@ -7,6 +7,10 @@
 # way every time, so the grant survives rebuilds and you're only prompted once.
 CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Apple Development/{print $$2; exit}')
 
+VERSION ?= 1.0.0
+BUILD ?= 1
+CODESIGN_OPTS ?=
+
 APP_BUNDLE := dist/ClaudeBar.app
 
 build:
@@ -20,8 +24,12 @@ bundle: build
 	mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_BUNDLE)/Contents/Resources
 	cp .build/release/ClaudeBar $(APP_BUNDLE)/Contents/MacOS/
 	cp Packaging/Info.plist $(APP_BUNDLE)/Contents/Info.plist
+	/usr/libexec/PlistBuddy \
+		-c "Set :CFBundleShortVersionString $(VERSION)" \
+		-c "Set :CFBundleVersion $(VERSION).$(BUILD)" \
+		$(APP_BUNDLE)/Contents/Info.plist
 	IDENT="$(CODESIGN_IDENTITY)"; [ -n "$$IDENT" ] || IDENT="-"; \
-	codesign --force --sign "$$IDENT" --identifier com.gordonbeeming.ClaudeBar $(APP_BUNDLE)
+	codesign --force --sign "$$IDENT" --identifier com.gordonbeeming.ClaudeBar $(CODESIGN_OPTS) $(APP_BUNDLE)
 
 install: bundle
 	pkill -x ClaudeBar || true
