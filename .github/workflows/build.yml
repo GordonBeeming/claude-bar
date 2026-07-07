@@ -99,6 +99,17 @@ jobs:
 
           rm certificate.p12
 
+          # Resolve the exact identity hash from the temp keychain rather than
+          # relying on the "Developer ID Application" common-name prefix, so
+          # codesign can't pick an unexpected identity if the keychain ever
+          # ends up holding more than one signing certificate.
+          IDENTITY_HASH="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | awk '/Developer ID Application/{print $2; exit}')"
+          if [[ -z "${IDENTITY_HASH}" ]]; then
+            echo "No 'Developer ID Application' identity found in the imported certificate." >&2
+            exit 1
+          fi
+          echo "CODESIGN_IDENTITY=${IDENTITY_HASH}" >> "${GITHUB_ENV}"
+
       # --- Build + sign the .app bundle ---------------------------------------
       # `make bundle` builds the release binary, stamps the version into
       # Info.plist, and codesigns it in one step (see Makefile).
@@ -107,7 +118,7 @@ jobs:
           make bundle \
             VERSION="${VERSION}" \
             BUILD="${{ github.run_number }}.${{ github.run_attempt }}" \
-            CODESIGN_IDENTITY="Developer ID Application" \
+            CODESIGN_IDENTITY="${CODESIGN_IDENTITY}" \
             CODESIGN_OPTS="--options runtime --timestamp"
 
       - name: Verify signature

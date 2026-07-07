@@ -125,10 +125,13 @@ final class UsageViewModel {
         // `swift run` session must not burn it, or the installed app would never
         // get its default-ON registration.
         guard launchAtLoginAvailable else { return }
-        defaults.set(true, forKey: Self.didApplyDefaultLaunchAtLoginKey)
         do {
             try LaunchAtLoginManager.setEnabled(true)
             launchAtLogin = true
+            // Only consume the one-shot flag once registration actually succeeds,
+            // so a transient failure (e.g. OS prompt/permissions timing) gets
+            // retried on the next launch instead of being silently given up on.
+            defaults.set(true, forKey: Self.didApplyDefaultLaunchAtLoginKey)
         } catch {
             // Best-effort default: a bare `swift run` binary or a first launch before
             // Gordon has granted anything shouldn't be treated as an error state.

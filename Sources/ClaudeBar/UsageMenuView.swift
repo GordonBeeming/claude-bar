@@ -78,7 +78,9 @@ struct UsageMenuView: View {
                 .foregroundStyle(.secondary)
         } else {
             let sorted = LimitPresentation.sorted(model.limits)
-            ForEach(Array(sorted.enumerated()), id: \.element.id) { index, limit in
+            // `UsageLimit.id` can collide for scoped limits missing a model display
+            // name, so identify rows by their stable offset instead.
+            ForEach(Array(sorted.enumerated()), id: \.offset) { index, limit in
                 if index > 0 {
                     Divider()
                 }
