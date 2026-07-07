@@ -4,6 +4,9 @@ import SwiftUI
 
 struct UsageMenuView: View {
     @Bindable var model: UsageViewModel
+    var settings: AppSettings
+
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -30,14 +33,21 @@ struct UsageMenuView: View {
 
                 Divider()
 
-                Toggle("Launch at login", isOn: $model.launchAtLogin)
-                    .disabled(!model.launchAtLoginAvailable)
-                    .help(model.launchAtLoginAvailable ? "" : "Available when installed as ClaudeBar.app")
+                HStack {
+                    Button("Settings…") {
+                        // An accessory app's Settings window otherwise opens behind
+                        // every other window, since the app itself never activates.
+                        NSApp.activate(ignoringOtherApps: true)
+                        openSettings()
+                    }
 
-                Button("Quit") {
-                    NSApp.terminate(nil)
+                    Spacer()
+
+                    Button("Quit") {
+                        NSApp.terminate(nil)
+                    }
+                    .keyboardShortcut("q")
                 }
-                .keyboardShortcut("q")
             }
             .padding()
             .frame(width: 320)
@@ -84,7 +94,7 @@ struct UsageMenuView: View {
                 if index > 0 {
                     Divider()
                 }
-                LimitRowView(limit: limit, now: now)
+                LimitRowView(limit: limit, now: now, severity: settings.thresholds.resolve(for: limit))
             }
         }
     }

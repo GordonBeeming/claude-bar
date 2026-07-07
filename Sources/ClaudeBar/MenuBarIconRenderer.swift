@@ -77,12 +77,13 @@ enum MenuBarIconRenderer {
 /// the label can appear more than once.
 struct MenuBarLabelView: View {
     let model: UsageViewModel
+    let settings: AppSettings
 
     var body: some View {
         let highest = model.highest
         Image(nsImage: MenuBarIconRenderer.image(
             percent: highest.map { Int($0.percent.rounded()) },
-            severity: highest?.severity ?? .normal
+            severity: highest.map { settings.thresholds.resolve(for: $0) } ?? .normal
         ))
         .onAppear {
             model.startPolling()

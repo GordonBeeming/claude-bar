@@ -4,6 +4,7 @@ import SwiftUI
 struct LimitRowView: View {
     let limit: UsageLimit
     let now: Date
+    let severity: Severity
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -29,7 +30,7 @@ struct LimitRowView: View {
     }
 
     private var tintColor: Color {
-        switch limit.severity {
+        switch severity {
         case .normal: return .accentColor
         case .warning: return .orange
         case .critical: return .red

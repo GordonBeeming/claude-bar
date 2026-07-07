@@ -24,6 +24,7 @@ bundle: build
 	mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_BUNDLE)/Contents/Resources
 	cp .build/release/ClaudeBar $(APP_BUNDLE)/Contents/MacOS/
 	cp Packaging/Info.plist $(APP_BUNDLE)/Contents/Info.plist
+	cp Packaging/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/
 	/usr/libexec/PlistBuddy \
 		-c "Set :CFBundleShortVersionString $(VERSION)" \
 		-c "Set :CFBundleVersion $(VERSION).$(BUILD)" \

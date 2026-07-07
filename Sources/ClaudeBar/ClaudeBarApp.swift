@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct ClaudeBarApp: App {
     @State private var model = UsageViewModel()
+    @State private var settings = AppSettings()
 
     init() {
         // Backstop for `swift run`: there's no Info.plist LSUIElement in that context
@@ -14,10 +15,14 @@ struct ClaudeBarApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            UsageMenuView(model: model)
+            UsageMenuView(model: model, settings: settings)
         } label: {
-            MenuBarLabelView(model: model)
+            MenuBarLabelView(model: model, settings: settings)
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView(settings: settings, model: model)
+        }
     }
 }
