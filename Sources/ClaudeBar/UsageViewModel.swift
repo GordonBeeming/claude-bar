@@ -40,14 +40,18 @@ final class UsageViewModel {
         Bundle.main.bundleURL.pathExtension == "app"
     }
 
-    var launchAtLogin: Bool {
-        get { LaunchAtLoginManager.isEnabled }
-        set {
+    // Stored (not computed) so `Observation` actually tracks it: a computed property
+    // that only reads a static on another type registers no dependency, and the
+    // toggle silently wouldn't reflect a reverted `oldValue` on failure.
+    var launchAtLogin: Bool = LaunchAtLoginManager.isEnabled {
+        didSet {
+            guard launchAtLogin != oldValue else { return }
             do {
-                try LaunchAtLoginManager.setEnabled(newValue)
+                try LaunchAtLoginManager.setEnabled(launchAtLogin)
             } catch {
                 logger.error("launch-at-login toggle failed: \(error.localizedDescription, privacy: .public)")
                 lastError = "Couldn't update launch at login: \(error.localizedDescription)"
+                launchAtLogin = oldValue
             }
         }
     }
@@ -94,8 +98,10 @@ final class UsageViewModel {
             lastError = nil
         } catch UsageClient.UsageError.unauthorized {
             authState = .tokenExpired
+            lastError = nil
         } catch UsageClient.UsageError.noToken {
             authState = .noToken
+            lastError = nil
         } catch {
             logger.error("usage refresh failed: \(error.localizedDescription, privacy: .public)")
             lastError = "Couldn't refresh: \(error.localizedDescription)"
@@ -122,10 +128,18 @@ final class UsageViewModel {
         defaults.set(true, forKey: Self.didApplyDefaultLaunchAtLoginKey)
         do {
             try LaunchAtLoginManager.setEnabled(true)
+            launchAtLogin = true
         } catch {
             // Best-effort default: a bare `swift run` binary or a first launch before
             // Gordon has granted anything shouldn't be treated as an error state.
             logger.error("default launch-at-login registration failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    isolated deinit {
+        pollTask?.cancel()
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
         }
     }
 }

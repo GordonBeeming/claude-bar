@@ -34,16 +34,19 @@ enum MenuBarIconRenderer {
         let spacing: CGFloat = attributedText != nil ? 2 : 0
         let width = symbolSize.width + spacing + textSize.width
 
-        let composed = NSImage(size: NSSize(width: width, height: height))
-        composed.lockFocus()
-        renderedSymbol?.draw(
-            at: NSPoint(x: 0, y: (height - symbolSize.height) / 2),
-            from: .zero,
-            operation: .sourceOver,
-            fraction: 1
-        )
-        attributedText?.draw(at: NSPoint(x: symbolSize.width + spacing, y: (height - textSize.height) / 2))
-        composed.unlockFocus()
+        // The block-based initializer lets AppKit call the drawing handler once per
+        // required scale factor; `lockFocus`/`unlockFocus` only ever produces a
+        // single 1x bitmap rep, which reads blurry on Retina menu bars.
+        let composed = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
+            renderedSymbol?.draw(
+                at: NSPoint(x: 0, y: (height - symbolSize.height) / 2),
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1
+            )
+            attributedText?.draw(at: NSPoint(x: symbolSize.width + spacing, y: (height - textSize.height) / 2))
+            return true
+        }
 
         composed.isTemplate = isTemplate
         return composed
@@ -60,13 +63,12 @@ enum MenuBarIconRenderer {
     /// Standard NSImage recolouring trick: paint the fill colour, then clip it to
     /// the source image's existing alpha via `.sourceAtop`.
     private static func tinted(_ image: NSImage, color: NSColor) -> NSImage {
-        let tintedImage = NSImage(size: image.size)
-        tintedImage.lockFocus()
-        color.set()
-        image.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
-        NSRect(origin: .zero, size: image.size).fill(using: .sourceAtop)
-        tintedImage.unlockFocus()
-        return tintedImage
+        NSImage(size: image.size, flipped: false) { rect in
+            color.set()
+            image.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
+            rect.fill(using: .sourceAtop)
+            return true
+        }
     }
 }
 

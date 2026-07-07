@@ -18,6 +18,9 @@ public struct UsageClient: Sendable {
         request.timeoutInterval = 15
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        // Anthropic routes requests without a `claude-code` User-Agent into a much
+        // stricter rate-limit bucket, so this app would otherwise see persistent 429s.
+        request.setValue("claude-code/2.1.114", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
