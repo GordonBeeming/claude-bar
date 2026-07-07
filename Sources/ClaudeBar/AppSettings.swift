@@ -17,12 +17,26 @@ final class AppSettings {
         didSet { defaults.set(useClaudeSeverity, forKey: Keys.useClaudeSeverity) }
     }
 
+    // Backed by a private stored property so clamping applies to every write,
+    // including the value loaded from UserDefaults at init — a corrupted or
+    // externally-edited defaults entry could otherwise feed an out-of-range value
+    // straight into ThresholdBarView's bindings.
+    private var _warningThresholdPercent: Double
     var warningThresholdPercent: Double {
-        didSet { defaults.set(warningThresholdPercent, forKey: Keys.warningThresholdPercent) }
+        get { _warningThresholdPercent }
+        set {
+            _warningThresholdPercent = Self.clamp(newValue)
+            defaults.set(_warningThresholdPercent, forKey: Keys.warningThresholdPercent)
+        }
     }
 
+    private var _criticalThresholdPercent: Double
     var criticalThresholdPercent: Double {
-        didSet { defaults.set(criticalThresholdPercent, forKey: Keys.criticalThresholdPercent) }
+        get { _criticalThresholdPercent }
+        set {
+            _criticalThresholdPercent = Self.clamp(newValue)
+            defaults.set(_criticalThresholdPercent, forKey: Keys.criticalThresholdPercent)
+        }
     }
 
     var thresholds: SeverityThresholds {
@@ -44,7 +58,13 @@ final class AppSettings {
         ])
 
         useClaudeSeverity = defaults.bool(forKey: Keys.useClaudeSeverity)
-        warningThresholdPercent = defaults.double(forKey: Keys.warningThresholdPercent)
-        criticalThresholdPercent = defaults.double(forKey: Keys.criticalThresholdPercent)
+        // Assign the backing fields directly — property observers don't run during
+        // init, so going through the computed setters above would skip the clamp.
+        _warningThresholdPercent = Self.clamp(defaults.double(forKey: Keys.warningThresholdPercent))
+        _criticalThresholdPercent = Self.clamp(defaults.double(forKey: Keys.criticalThresholdPercent))
+    }
+
+    private static func clamp(_ value: Double) -> Double {
+        min(max(value, 1), 100)
     }
 }

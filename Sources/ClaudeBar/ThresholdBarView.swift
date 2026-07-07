@@ -78,7 +78,11 @@ struct ThresholdBarView: View {
     private func dragGesture(width: CGFloat, apply: @escaping (Double) -> Void) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("bar"))
             .onChanged { value in
+                // width is 0 for a transient instant during layout; bail rather than
+                // divide by it and feed an infinite/NaN percent into the binding.
+                guard width > 0 else { return }
                 let percent = (value.location.x / width * 100).rounded()
+                guard percent.isFinite else { return }
                 apply(min(max(percent, 1), 100))
             }
     }
