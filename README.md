@@ -16,12 +16,9 @@
 
 ---
 
-I got tired of opening a terminal (or getting cut off mid-session) to find out how much Claude I had left. ClaudeBar sits in the menu bar and shows the number that matters: the highest usage percentage across all your limits. The dropdown breaks down every category — session (5h window), weekly across all models, and any model-scoped limits like Fable or Sonnet.
+ClaudeBar shows your Claude plan's usage limits in the menu bar — the same numbers you'd find on Claude's usage page, nothing more. The bar shows the highest percentage across your limits; the dropdown lists each one: session (5h window), weekly across all models, and any model-scoped limits like Fable or Sonnet, each with a progress bar and its reset time in your local timezone.
 
-Two things it gets right that pushed me to build it:
-
-- **Reset times are in *your* timezone.** "Resets 4:20 pm today", not a UTC guess that's off by half a day.
-- **Zero lag.** The menu renders instantly from cached data and refreshes in the background. No frozen beachball while a network call decides your fate.
+That's the whole app. No cost tracking, no charts, no extras. The menu renders instantly from cached data and refreshes in the background.
 
 ## Install
 
