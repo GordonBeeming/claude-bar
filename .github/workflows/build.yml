@@ -117,7 +117,7 @@ jobs:
         run: |
           make bundle \
             VERSION="${VERSION}" \
-            BUILD="${{ github.run_number }}.${{ github.run_attempt }}" \
+            BUILD="${{ github.run_number }}" \
             CODESIGN_IDENTITY="${CODESIGN_IDENTITY}" \
             CODESIGN_OPTS="--options runtime --timestamp"
 
@@ -195,6 +195,7 @@ jobs:
             homepage "https://github.com/gordonbeeming/claude-bar"
 
             depends_on macos: ">= :sequoia"
+            depends_on arch: :arm64
             app "ClaudeBar.app"
 
             zap trash: [
