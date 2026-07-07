@@ -1,53 +1,65 @@
-# ClaudeBar
+<p align="center">
+  <img src="docs/icon.png" width="128" alt="ClaudeBar icon" />
+</p>
 
-A tiny macOS menu bar app that shows my Claude usage limits: session, weekly, and per-model percentages, without having to open a terminal or a browser tab. Reset times show up in my local timezone. It renders a cached value instantly on click, then refreshes in the background, so there's no lag waiting on a network call.
+<h1 align="center">ClaudeBar</h1>
 
-## Requirements
+<p align="center">
+  Your Claude usage limits, in the macOS menu bar, in your timezone.
+</p>
 
-- macOS 15+
-- Claude Code installed and logged in
+<p align="center">
+  <a href="https://github.com/GordonBeeming/claude-bar/actions/workflows/build.yml"><img src="https://github.com/GordonBeeming/claude-bar/actions/workflows/build.yml/badge.svg" alt="Build status" /></a>
+  <a href="https://github.com/GordonBeeming/claude-bar/releases/latest"><img src="https://img.shields.io/github/v/release/GordonBeeming/claude-bar" alt="Latest release" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS%2015%2B%20(Apple%20Silicon)-blue" alt="macOS 15+ Apple Silicon" />
+</p>
 
-ClaudeBar reads the Claude Code OAuth token straight out of the macOS Keychain. It never writes to it or refreshes the token; that's Claude Code's job. If the token has expired, ClaudeBar keeps showing the last known numbers with a hint to open Claude Code (which refreshes the token as it runs) rather than failing silently.
+---
+
+I got tired of opening a terminal (or getting cut off mid-session) to find out how much Claude I had left. ClaudeBar sits in the menu bar and shows the number that matters: the highest usage percentage across all your limits. The dropdown breaks down every category — session (5h window), weekly across all models, and any model-scoped limits like Fable or Sonnet.
+
+Two things it gets right that pushed me to build it:
+
+- **Reset times are in *your* timezone.** "Resets 4:20 pm today", not a UTC guess that's off by half a day.
+- **Zero lag.** The menu renders instantly from cached data and refreshes in the background. No frozen beachball while a network call decides your fate.
 
 ## Install
 
-```
+```sh
 brew install --cask gordonbeeming/tap/claude-bar
 ```
 
+Needs macOS 15+ on Apple Silicon, plus [Claude Code](https://claude.com/claude-code) installed and logged in — ClaudeBar reads its OAuth token from the Keychain (read-only, one permission prompt, click **Always Allow**). It never writes or refreshes the token; that's Claude Code's job. If the token expires, ClaudeBar keeps showing the last known numbers with a hint to open Claude Code.
+
 ### From source
 
-```
+```sh
 make install
-```
-
-This builds a release binary, bundles it into `dist/ClaudeBar.app`, and copies it to `~/Applications/ClaudeBar.app`. Then:
-
-```
 open ~/Applications/ClaudeBar.app
 ```
 
-The first time it reads the Keychain item, macOS will ask for your permission. Click **Always Allow** so you're not prompted again.
+`make install` signs with your Apple Development identity when one exists, falling back to ad-hoc. Ad-hoc mints a fresh signing identity every build, so the Keychain prompt comes back after each rebuild; a real identity keeps the grant forever.
 
-That "always allow" grant is tied to the app's code signature. `make install` signs with a real Apple Development identity if `security find-identity` finds one, falling back to ad-hoc signing (`-`) if it doesn't. Ad-hoc signing mints a fresh identity on every build, so with it you'll get the Keychain prompt again after every rebuild. A proper dev identity keeps the same signature across builds, so you only see the prompt once, ever. If you have an Apple Development certificate in your keychain, this happens automatically, no setup needed.
+## Settings
 
-## Dev loop
+Open **Settings…** from the dropdown:
 
-```
-make run    # swift run, straight from source
-make test   # swift test
-```
-
-## Launch at login
-
-Toggle "Launch at Login" from the menu bar item. ClaudeBar runs as an accessory app with no Dock icon and no app switcher entry; it's meant to just sit in the menu bar.
+- **Usage colours** — by default the icon turns orange/red when Claude's API says a limit is at warning/critical. Untick *Use Claude's severity levels* and you get a blue → orange → red bar: drag the two splitters to pick your own warning and critical percentages.
+- **Launch at login** — on by default, toggle it here.
 
 ## How it works
 
-ClaudeBar calls `GET https://api.anthropic.com/api/oauth/usage` with the OAuth token from Keychain, then renders the `limits` array it gets back — one entry per scope (session, weekly, per-model), each with a percentage used and a reset time. Reset times are converted from UTC to your system timezone before display.
+ClaudeBar polls `GET https://api.anthropic.com/api/oauth/usage` (once a minute, plus on menu open when stale) with the Claude Code OAuth token, and renders the `limits` array it gets back — one row per limit with percent used, a progress bar, and "Resets 5:00 pm · in 4h 55m" converted from UTC to your system timezone. The app is an accessory (no Dock icon, no app switcher entry); it just lives in the menu bar.
 
-There's no polling loop hammering the API — it refreshes on click and on a light background interval, and always shows the last good value while a refresh is in flight.
+## Dev loop
+
+```sh
+make run    # swift run, straight from source
+make test   # swift test — core logic is fully unit-tested
+```
+
+The core library (`ClaudeBarCore`) holds everything testable: ISO8601 parsing, timezone formatting, severity thresholds, JSON decoding that survives unknown limit kinds. The app target is a thin SwiftUI `MenuBarExtra` on top.
 
 ## Releasing
 
-Push a `vX.Y` tag and publish a GitHub release for it. CI signs, notarizes, and uploads the DMG, then updates the Homebrew tap so `brew upgrade --cask claude-bar` picks up the new version.
+Tag `vX.Y`, publish a GitHub release for it, and CI does the rest: signs with Developer ID, notarizes, staples, uploads the DMG, and pushes the updated cask to [the tap](https://github.com/GordonBeeming/homebrew-tap) so `brew upgrade --cask claude-bar` picks it up.
