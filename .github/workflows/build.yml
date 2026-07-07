@@ -1,0 +1,215 @@
+# =============================================================================
+# build.yml — CI/CD pipeline for ClaudeBar
+#
+# Triggers:
+#   - Push to main        → build + test (validates code compiles and passes)
+#   - Pull request to main → build + test (gate for merge)
+#   - Published release   → build + test + sign + notarize + package + upload
+#
+# Secrets required (set in the `prod` GitHub environment):
+#   DEVELOPER_ID_CERTIFICATE — Base64-encoded .p12 file containing the
+#                              "Developer ID Application" signing certificate
+#   DEVELOPER_ID_PASSWORD    — Password used to protect the .p12 file
+#   APPLE_ID                 — Apple Developer account email address
+#   APPLE_TEAM_ID            — 10-character Apple Developer Team ID
+#   APPLE_APP_PASSWORD       — App-specific password generated at
+#                              appleid.apple.com for notarytool auth
+#   HOMEBREW_TAP_DEPLOY_KEY  — SSH deploy key with write access to
+#                              gordonbeeming/homebrew-tap
+# =============================================================================
+
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  build-and-test:
+    # macos-15 ships Xcode ≥16.3, which Swift 6.1 (this package's tools-version) requires.
+    runs-on: macos-15
+    name: Build & Test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Print Swift version
+        run: swift --version
+
+      - name: Build all targets
+        run: swift build --build-tests
+
+      - name: Run tests
+        run: swift test --parallel
+
+  release:
+    needs: build-and-test
+    if: github.event_name == 'release'
+    runs-on: macos-15
+    name: Sign, Notarize & Release
+    environment: prod
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set release version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be major.minor with a v prefix, like v0.1; got ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+
+      # --- Import signing certificate ----------------------------------------
+      # The Developer ID certificate is stored as a base64-encoded secret.
+      # We decode it, import it into a temporary keychain, and set it as the
+      # default so codesign can find it automatically.
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+        run: |
+          echo "${CERTIFICATE_BASE64}" | base64 --decode > certificate.p12
+
+          KEYCHAIN_PATH="${RUNNER_TEMP}/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security default-keychain -s "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+
+          security import certificate.p12 \
+            -k "${KEYCHAIN_PATH}" \
+            -P "${CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" \
+            "${KEYCHAIN_PATH}"
+
+          rm certificate.p12
+
+          # Resolve the exact identity hash from the temp keychain rather than
+          # relying on the "Developer ID Application" common-name prefix, so
+          # codesign can't pick an unexpected identity if the keychain ever
+          # ends up holding more than one signing certificate.
+          IDENTITY_HASH="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | awk '/Developer ID Application/{print $2; exit}')"
+          if [[ -z "${IDENTITY_HASH}" ]]; then
+            echo "No 'Developer ID Application' identity found in the imported certificate." >&2
+            exit 1
+          fi
+          echo "CODESIGN_IDENTITY=${IDENTITY_HASH}" >> "${GITHUB_ENV}"
+
+      # --- Build + sign the .app bundle ---------------------------------------
+      # `make bundle` builds the release binary, stamps the version into
+      # Info.plist, and codesigns it in one step (see Makefile).
+      - name: Build signed app bundle
+        run: |
+          make bundle \
+            VERSION="${VERSION}" \
+            BUILD="${{ github.run_number }}" \
+            CODESIGN_IDENTITY="${CODESIGN_IDENTITY}" \
+            CODESIGN_OPTS="--options runtime --timestamp"
+
+      - name: Verify signature
+        run: codesign --verify --deep --strict dist/ClaudeBar.app
+
+      # --- Notarize the .app --------------------------------------------------
+      # Apple notarization scans the binary for malware and issues a ticket.
+      # Without notarization, macOS Gatekeeper blocks the app on first launch.
+      - name: Notarize application
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent dist/ClaudeBar.app dist/ClaudeBar-notarize.zip
+
+          xcrun notarytool submit dist/ClaudeBar-notarize.zip \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_PASSWORD}" \
+            --wait
+
+          rm dist/ClaudeBar-notarize.zip
+
+      - name: Staple notarization ticket
+        run: xcrun stapler staple dist/ClaudeBar.app
+
+      - name: Create DMG
+        run: |
+          hdiutil create \
+            -volname "ClaudeBar" \
+            -srcfolder dist/ClaudeBar.app \
+            -ov \
+            -format UDZO \
+            "dist/ClaudeBar-${VERSION}.dmg"
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist/ClaudeBar-${VERSION}.dmg" \
+            --clobber
+
+      # --- Update Homebrew tap -------------------------------------------------
+      # Pushes an updated cask definition to gordonbeeming/homebrew-tap so users
+      # can install/upgrade via `brew install --cask gordonbeeming/tap/claude-bar`.
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          test -n "${HOMEBREW_TAP_DEPLOY_KEY}" || { echo "HOMEBREW_TAP_DEPLOY_KEY is not set in the prod environment." >&2; exit 1; }
+
+          DMG_PATH="dist/ClaudeBar-${VERSION}.dmg"
+          DMG_SHA256="$(shasum -a 256 "${DMG_PATH}" | awk '{print $1}')"
+
+          mkdir -p ~/.ssh
+          echo "${HOMEBREW_TAP_DEPLOY_KEY}" > ~/.ssh/homebrew_tap_key
+          chmod 600 ~/.ssh/homebrew_tap_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/homebrew_tap_key -o StrictHostKeyChecking=no"
+
+          git clone git@github.com:GordonBeeming/homebrew-tap.git /tmp/homebrew-tap
+
+          mkdir -p /tmp/homebrew-tap/Casks
+          cat > /tmp/homebrew-tap/Casks/claude-bar.rb << CASK_EOF
+          cask "claude-bar" do
+            version "${VERSION}"
+            sha256 "${DMG_SHA256}"
+
+            url "https://github.com/gordonbeeming/claude-bar/releases/download/v#{version}/ClaudeBar-#{version}.dmg"
+            name "ClaudeBar"
+            desc "Claude usage limits in the macOS menu bar"
+            homepage "https://github.com/gordonbeeming/claude-bar"
+
+            depends_on macos: ">= :sequoia"
+            depends_on arch: :arm64
+            app "ClaudeBar.app"
+
+            zap trash: [
+              "~/Library/Preferences/com.gordonbeeming.ClaudeBar.plist",
+            ]
+          end
+          CASK_EOF
+          sed -i '' 's/^          //' /tmp/homebrew-tap/Casks/claude-bar.rb
+
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/claude-bar.rb
+          git commit -m "Update claude-bar to ${VERSION}" || echo "No changes to commit"
+          git push
+
+          rm -f ~/.ssh/homebrew_tap_key
