@@ -45,13 +45,22 @@ struct LimitRowView: View {
         GeometryReader { geo in
             let width = geo.size.width
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.quaternary)
+                // Track and fill are plain rectangles clipped to a capsule together, so
+                // the fill stays a rounded horizontal bar even at very low percentages.
+                // A `Capsule` fill narrower than it is tall renders as a vertical pill
+                // instead, which reads as a distorted blob at 1–2% usage.
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(.quaternary)
 
-                Capsule()
-                    .fill(tintColor)
-                    .frame(width: width * clampedPercent / 100)
+                    Rectangle()
+                        .fill(tintColor)
+                        .frame(width: width * clampedPercent / 100)
+                }
+                .clipShape(Capsule())
 
+                // The marker sits outside the capsule clip so the rounded corners don't
+                // trim it when the pace lands near either edge of the track.
                 if let paceFraction {
                     Rectangle()
                         .fill(Color.primary.opacity(0.6))
@@ -68,8 +77,11 @@ struct LimitRowView: View {
     }
 
     private func markerOffset(paceFraction: Double, width: CGFloat) -> CGFloat {
-        // Clamp so the marker itself never renders half off the track at either edge.
-        min(max(width * paceFraction - markerWidth / 2, 0), width - markerWidth)
+        // Clamp so the marker never renders half off the track at either edge. Floor the
+        // upper bound at 0: a transient layout pass with width < markerWidth would
+        // otherwise make `width - markerWidth` negative and push the marker off-track.
+        let maxOffset = max(width - markerWidth, 0)
+        return min(max(width * paceFraction - markerWidth / 2, 0), maxOffset)
     }
 
     private var barAccessibilityValue: String {
