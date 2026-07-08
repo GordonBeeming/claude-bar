@@ -26,7 +26,7 @@ That's the whole app. No cost tracking, no charts, no extras. The menu renders i
 brew install --cask gordonbeeming/tap/claude-bar
 ```
 
-Needs macOS 15+ on Apple Silicon, plus [Claude Code](https://claude.com/claude-code) installed and logged in — ClaudeBar reads its OAuth token from the Keychain (read-only; click **Always Allow** when macOS asks). It never writes or refreshes the token; that's Claude Code's job. If the token expires, ClaudeBar keeps showing the last known numbers with a hint to open Claude Code. macOS reasks for that Keychain permission every so often — [Keychain access](#keychain-access) explains why.
+Needs macOS 15+ on Apple Silicon, plus [Claude Code](https://claude.com/claude-code) installed and logged in — ClaudeBar reads its OAuth token from the Keychain (read-only; click **Always Allow** when macOS asks). It never writes or refreshes the token; that's Claude Code's job. If the token expires, ClaudeBar keeps showing the last known numbers with a hint to open Claude Code. macOS re-asks for that Keychain permission every so often — [Keychain access](#keychain-access) explains why.
 
 ### From source
 
@@ -50,7 +50,7 @@ ClaudeBar polls `GET https://api.anthropic.com/api/oauth/usage` (once a minute, 
 
 ## Keychain access
 
-ClaudeBar reads one Keychain item — Claude Code's `Claude Code-credentials` — to get the OAuth token the usage endpoint needs. It only reads: never writes the item, never refreshes the token, never touches the refresh token.
+ClaudeBar reads one Keychain item — Claude Code's `Claude Code-credentials` — to get the OAuth token the usage endpoint needs. It only reads — it never writes the item, refreshes the token, or touches the refresh token.
 
 macOS gates that read behind a consent prompt. Click **Always Allow** and macOS trusts ClaudeBar for that item — until Claude Code next rotates its token. Claude Code refreshes its OAuth token a couple of times a day, and every refresh rewrites the Keychain item, which clears the item's list of trusted apps. So the prompt comes back and you grant it again. It isn't a bug in ClaudeBar or a setting that didn't save; macOS treats a rewritten item as new and re-checks who's allowed to read it.
 
