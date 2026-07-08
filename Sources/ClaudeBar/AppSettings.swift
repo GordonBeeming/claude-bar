@@ -9,12 +9,18 @@ final class AppSettings {
         static let useClaudeSeverity = "useClaudeSeverity"
         static let warningThresholdPercent = "warningThresholdPercent"
         static let criticalThresholdPercent = "criticalThresholdPercent"
+        static let showMenuBarFlame = "showMenuBarFlame"
     }
 
     private let defaults = UserDefaults.standard
 
     var useClaudeSeverity: Bool {
         didSet { defaults.set(useClaudeSeverity, forKey: Keys.useClaudeSeverity) }
+    }
+
+    /// Whether the menu-bar icon shows the 🔥 flame when a limit is burning over pace.
+    var showMenuBarFlame: Bool {
+        didSet { defaults.set(showMenuBarFlame, forKey: Keys.showMenuBarFlame) }
     }
 
     // Backed by a private stored property so clamping applies to every write,
@@ -54,10 +60,12 @@ final class AppSettings {
         UserDefaults.standard.register(defaults: [
             Keys.useClaudeSeverity: true,
             Keys.warningThresholdPercent: 75.0,
-            Keys.criticalThresholdPercent: 90.0
+            Keys.criticalThresholdPercent: 90.0,
+            Keys.showMenuBarFlame: true
         ])
 
         useClaudeSeverity = defaults.bool(forKey: Keys.useClaudeSeverity)
+        showMenuBarFlame = defaults.bool(forKey: Keys.showMenuBarFlame)
         // Assign the backing fields directly — property observers don't run during
         // init, so going through the computed setters above would skip the clamp.
         _warningThresholdPercent = Self.clamp(defaults.double(forKey: Keys.warningThresholdPercent))

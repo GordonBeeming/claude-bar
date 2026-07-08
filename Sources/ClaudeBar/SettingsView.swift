@@ -22,6 +22,14 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Menu bar") {
+                Toggle("Show 🔥 when burning over pace", isOn: $settings.showMenuBarFlame)
+
+                Text("The flame appears next to the percentage when a limit burns faster than its window's steady pace. Weekly (all models) turns a deeper red; the session and model-scoped windows stay orange.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("General") {
                 Toggle("Launch at login", isOn: $model.launchAtLogin)
                     .disabled(!model.launchAtLoginAvailable)
