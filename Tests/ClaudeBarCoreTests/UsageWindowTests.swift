@@ -69,6 +69,14 @@ struct UsageWindowTests {
         #expect(!UsageWindow.isOverPace(for: behind, now: fixedNow))
     }
 
+    @Test func isOverPaceFalseWhenExactlyOnPaceDespiteFloatError() {
+        // 29% used at 29% elapsed of the 5h window: `fraction * 100` comes back as
+        // 28.9999… in double, so a bare `> 0` comparison would wrongly flag over pace.
+        let elapsed = 0.29 * (5 * 3600)
+        let onPace = limit(group: "session", percent: 29, resetsAt: fixedNow.addingTimeInterval(5 * 3600 - elapsed))
+        #expect(!UsageWindow.isOverPace(for: onPace, now: fixedNow))
+    }
+
     @Test func isOverPaceRespectsExplicitMargin() {
         // 53% used at 50% elapsed → 3 points ahead: over the bare line, but inside a 5% buffer.
         let slightlyAhead = limit(group: "session", percent: 53, resetsAt: fixedNow.addingTimeInterval(2.5 * 3600))

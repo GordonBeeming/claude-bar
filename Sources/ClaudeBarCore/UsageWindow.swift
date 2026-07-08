@@ -35,6 +35,10 @@ public enum UsageWindow {
     /// still pass a margin to absorb bursty usage if it wants a buffer.
     public static func isOverPace(for limit: UsageLimit, now: Date, marginPercent: Double = 0) -> Bool {
         guard let fraction = paceFraction(for: limit, now: now) else { return false }
-        return limit.percent - fraction * 100 > marginPercent
+        // A tiny tolerance absorbs floating-point error in `fraction * 100` so a limit
+        // sitting exactly on the line (e.g. 29% used at 29% elapsed, where the product
+        // comes back as 28.999999…) doesn't trip the flame on a rounding artefact.
+        let tolerance = 0.0001
+        return limit.percent - fraction * 100 > marginPercent + tolerance
     }
 }

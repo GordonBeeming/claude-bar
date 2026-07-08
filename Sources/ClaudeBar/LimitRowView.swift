@@ -90,10 +90,12 @@ struct LimitRowView: View {
         return base + ", ahead of pace by \(aheadOfPacePercent) percent"
     }
 
-    // Floored at 1: once usage is past the line the delta can round to 0, and
-    // "ahead of pace by 0%" reads as a bug rather than "just over".
+    // Only meaningful when over pace; guard so a stray read when on/under pace can't
+    // report a misleading "1". Floored at 1 otherwise, since once usage is past the
+    // line the delta can round to 0 and "ahead of pace by 0%" reads as a bug.
     private var aheadOfPacePercent: Int {
-        max(1, Int(paceDelta.rounded()))
+        guard isOverPace else { return 0 }
+        return max(1, Int(paceDelta.rounded()))
     }
 
     private var clampedPercent: Double {
