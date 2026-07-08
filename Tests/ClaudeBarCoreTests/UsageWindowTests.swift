@@ -55,16 +55,25 @@ struct UsageWindowTests {
         #expect(UsageWindow.paceFraction(for: alreadyPast, now: fixedNow) == 1)
     }
 
-    @Test func isOverPaceTrueWhenAheadBeyondMargin() {
-        // Halfway through (50% elapsed), 60% used → 10 points ahead, beyond the 5% margin.
+    @Test func isOverPaceTrueWhenAheadOfLine() {
+        // Halfway through (50% elapsed), 60% used → past the pace line → over pace.
         let ahead = limit(group: "session", percent: 60, resetsAt: fixedNow.addingTimeInterval(2.5 * 3600))
         #expect(UsageWindow.isOverPace(for: ahead, now: fixedNow))
     }
 
-    @Test func isOverPaceFalseWithinMargin() {
-        // Halfway through, 53% used → only 3 points ahead, within the 5% margin.
-        let withinMargin = limit(group: "session", percent: 53, resetsAt: fixedNow.addingTimeInterval(2.5 * 3600))
-        #expect(!UsageWindow.isOverPace(for: withinMargin, now: fixedNow))
+    @Test func isOverPaceFalseAtOrBelowLine() {
+        // Exactly on the line (50% used, 50% elapsed) and behind it (40%) are both not over pace.
+        let onPace = limit(group: "session", percent: 50, resetsAt: fixedNow.addingTimeInterval(2.5 * 3600))
+        #expect(!UsageWindow.isOverPace(for: onPace, now: fixedNow))
+        let behind = limit(group: "session", percent: 40, resetsAt: fixedNow.addingTimeInterval(2.5 * 3600))
+        #expect(!UsageWindow.isOverPace(for: behind, now: fixedNow))
+    }
+
+    @Test func isOverPaceRespectsExplicitMargin() {
+        // 53% used at 50% elapsed → 3 points ahead: over the bare line, but inside a 5% buffer.
+        let slightlyAhead = limit(group: "session", percent: 53, resetsAt: fixedNow.addingTimeInterval(2.5 * 3600))
+        #expect(UsageWindow.isOverPace(for: slightlyAhead, now: fixedNow))
+        #expect(!UsageWindow.isOverPace(for: slightlyAhead, now: fixedNow, marginPercent: 5))
     }
 
     @Test func isOverPaceFalseForUnknownGroup() {

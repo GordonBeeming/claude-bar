@@ -29,10 +29,11 @@ public enum UsageWindow {
         return min(max(fraction, 0), 1)
     }
 
-    /// True when actual usage is ahead of the steady-pace line by more than
-    /// `marginPercent` — a small margin absorbs normal bursty usage instead of
-    /// flagging every limit that's a couple of percent ahead.
-    public static func isOverPace(for limit: UsageLimit, now: Date, marginPercent: Double = 5) -> Bool {
+    /// True when actual usage is ahead of the steady-pace line. `marginPercent`
+    /// defaults to 0 so "the fill has crossed the pace marker" and "flagged as over
+    /// pace" always agree — the line and the 🔥 flame can't disagree. A caller can
+    /// still pass a margin to absorb bursty usage if it wants a buffer.
+    public static func isOverPace(for limit: UsageLimit, now: Date, marginPercent: Double = 0) -> Bool {
         guard let fraction = paceFraction(for: limit, now: now) else { return false }
         return limit.percent - fraction * 100 > marginPercent
     }
