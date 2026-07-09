@@ -8,6 +8,16 @@ struct SettingsView: View {
 
     @State private var pastedCode = ""
 
+    // Codes are pasted from a web page and often carry a trailing newline, which makes the
+    // single-line field wrap to a second line. Strip whitespace as it's set — a valid code
+    // never contains any — so the field stays on one line.
+    private var codeBinding: Binding<String> {
+        Binding(
+            get: { pastedCode },
+            set: { pastedCode = $0.filter { !$0.isWhitespace } }
+        )
+    }
+
     var body: some View {
         Form {
             Section("Usage data source") {
@@ -89,8 +99,9 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 HStack {
-                    TextField("Paste code", text: $pastedCode)
+                    TextField("Paste code", text: codeBinding)
                         .textFieldStyle(.roundedBorder)
+                        .lineLimit(1)
                     Button("Submit") {
                         let code = pastedCode
                         pastedCode = ""
