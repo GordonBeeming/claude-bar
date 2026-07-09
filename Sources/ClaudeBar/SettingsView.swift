@@ -122,7 +122,25 @@ struct SettingsView: View {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)
-                Button("Try again") { login.startSignIn() }
+
+                // Keep the paste field while a flow is still in-air (e.g. a 429) so the user
+                // can retry a fresh code without reopening the browser; otherwise just offer
+                // to start over.
+                if login.hasPendingSignIn {
+                    HStack {
+                        TextField("Paste code", text: $pastedCode)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Submit") {
+                            let code = pastedCode
+                            pastedCode = ""
+                            Task { await login.submitCode(code) }
+                        }
+                        .disabled(pastedCode.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    Button("Restart browser sign-in") { login.startSignIn() }
+                } else {
+                    Button("Try again") { login.startSignIn() }
+                }
             }
         }
     }

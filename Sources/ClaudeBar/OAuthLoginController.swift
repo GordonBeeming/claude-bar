@@ -42,6 +42,11 @@ final class OAuthLoginController {
         return false
     }
 
+    /// True while a browser flow is mid-air (PKCE + state retained), so a failed exchange —
+    /// e.g. a transient 429 — can be retried by pasting a fresh code without reopening the
+    /// browser. Cleared once sign-in succeeds or the user starts over.
+    var hasPendingSignIn: Bool { pending != nil }
+
     /// Generates a fresh PKCE pair + state and opens the authorize page in the default
     /// browser. The user copies the code the callback renders and pastes it into Settings.
     func startSignIn() {
@@ -87,8 +92,12 @@ final class OAuthLoginController {
             return "Security check failed (state mismatch). Start sign-in again."
         case OAuthClient.OAuthError.malformedResponse:
             return "Unexpected response from Anthropic. Try again."
+        case OAuthClient.OAuthError.http(429):
+            return "Anthropic is rate-limiting sign-in right now. Wait a minute, then Try again."
+        case OAuthClient.OAuthError.http(400):
+            return "That code didn't take (expired or already used). Try again for a fresh one."
         case OAuthClient.OAuthError.http(let status):
-            return "Sign-in failed (HTTP \(status)). Check the code and try again."
+            return "Sign-in failed (HTTP \(status)). Try again for a fresh code."
         default:
             return "Sign-in failed: \(error.localizedDescription)"
         }
