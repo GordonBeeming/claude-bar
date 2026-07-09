@@ -59,17 +59,17 @@ public struct SelfContainedCredentialStore: Sendable {
         SecItemDelete(query as CFDictionary)
     }
 
-    /// The current access token, refreshing first when it's near expiry. Returns nil on any
-    /// failure (no stored token, refresh rejected) so the caller falls back to Claude Code's
-    /// token rather than erroring the whole poll.
-    public func validAccessToken(now: Date = Date()) async -> String? {
+    /// The current access token, refreshing first when it's near expiry. Returns nil only
+    /// when there's no stored token (not signed in). A refresh failure is *thrown*, not
+    /// swallowed, so the caller can tell an auth rejection (fall back to Claude Code) apart
+    /// from a network/server error (fail the poll rather than needlessly hit Claude Code's
+    /// Keychain — which would prompt, then fail anyway because the network is down).
+    public func validAccessToken(now: Date = Date()) async throws -> String? {
         guard let tokens = load() else { return nil }
         guard OAuthClient.needsRefresh(expiresAt: tokens.expiresAt, now: now) else {
             return tokens.accessToken
         }
-        guard let refreshed = try? await client.refresh(refreshToken: tokens.refreshToken) else {
-            return nil
-        }
+        let refreshed = try await client.refresh(refreshToken: tokens.refreshToken)
         save(refreshed)
         return refreshed.accessToken
     }
