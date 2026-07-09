@@ -112,6 +112,7 @@ enum MenuBarIconRenderer {
 struct MenuBarLabelView: View {
     let model: UsageViewModel
     let settings: AppSettings
+    let celebrations: CelebrationController
 
     var body: some View {
         let highest = model.highest
@@ -121,6 +122,7 @@ struct MenuBarLabelView: View {
             flameColor: flameColor
         ))
         .onAppear {
+            model.attachCelebrations(settings: settings, controller: celebrations)
             model.startPolling()
         }
     }
