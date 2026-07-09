@@ -77,7 +77,15 @@ public struct OAuthClient: Sendable {
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("claude-code/2.1.114", forHTTPHeaderField: "User-Agent")
+        // The token gateway rejects requests that don't carry the CLI's headers with a
+        // generic 429 (not a 400) — so these aren't optional. `x-app: cli`, the OAuth beta
+        // flag, the API version, and a `claude-cli` User-Agent together make the request
+        // look like the CLI's, which is the client we're reusing. Without them every
+        // exchange fails as a false "rate limit".
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("cli", forHTTPHeaderField: "x-app")
+        request.setValue("claude-cli/2.1.205 (external, cli)", forHTTPHeaderField: "User-Agent")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
