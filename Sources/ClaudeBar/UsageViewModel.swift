@@ -103,7 +103,8 @@ final class UsageViewModel {
         defer { isRefreshing = false }
 
         do {
-            let response = try await service.fetch()
+            let preferSelfContained = settings?.credentialSource == .selfContained
+            let response = try await service.fetch(preferSelfContained: preferSelfContained)
             limits = response.limits
             lastUpdated = Date()
             authState = .ok

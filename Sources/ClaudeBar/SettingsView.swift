@@ -4,9 +4,31 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var settings: AppSettings
     @Bindable var model: UsageViewModel
+    @Bindable var login: OAuthLoginController
+
+    @State private var pastedCode = ""
 
     var body: some View {
         Form {
+            Section("Usage data source") {
+                Picker("Token from", selection: $settings.credentialSource) {
+                    ForEach(CredentialSource.allCases, id: \.self) { source in
+                        Text(source.label).tag(source)
+                    }
+                }
+
+                if settings.credentialSource == .selfContained {
+                    signInControls
+                    Text("Signs in with its own token, so macOS stops re-asking for Keychain access every time Claude Code rotates its token. Falls back to Claude Code's token if this sign-in ever fails.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Reads Claude Code's Keychain token. macOS re-asks for access whenever Claude Code rotates it — switch to self-contained sign-in to stop that.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Usage colours") {
                 Toggle("Use Claude's severity levels", isOn: $settings.useClaudeSeverity)
 
@@ -53,6 +75,56 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 380)
+    }
+
+    @ViewBuilder
+    private var signInControls: some View {
+        switch login.phase {
+        case .signedOut:
+            Button("Sign in with Claude…") { login.startSignIn() }
+
+        case .awaitingCode:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("A browser window opened. Approve access, then paste the code it shows here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    TextField("Paste code", text: $pastedCode)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Submit") {
+                        let code = pastedCode
+                        pastedCode = ""
+                        Task { await login.submitCode(code) }
+                    }
+                    .disabled(pastedCode.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
+        case .exchanging:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Signing in…")
+            }
+
+        case .signedIn(let expiresAt):
+            HStack {
+                Label("Signed in", systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(.green)
+                Spacer()
+                Button("Sign out") { login.signOut() }
+            }
+            Text("Token valid until \(expiresAt.formatted(date: .abbreviated, time: .shortened)); it refreshes automatically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Button("Try again") { login.startSignIn() }
+            }
+        }
     }
 
     @ViewBuilder

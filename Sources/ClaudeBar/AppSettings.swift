@@ -2,6 +2,21 @@ import ClaudeBarCore
 import Foundation
 import Observation
 
+/// Where the usage token comes from. `claudeCode` (default) reads Claude Code's Keychain
+/// item; `selfContained` uses our own OAuth sign-in and only falls back to Claude Code's
+/// token if ours fails.
+enum CredentialSource: String, CaseIterable, Sendable {
+    case claudeCode
+    case selfContained
+
+    var label: String {
+        switch self {
+        case .claudeCode: return "Claude Code (default)"
+        case .selfContained: return "Self-contained sign-in"
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AppSettings {
@@ -11,6 +26,7 @@ final class AppSettings {
         static let criticalThresholdPercent = "criticalThresholdPercent"
         static let showMenuBarFlame = "showMenuBarFlame"
         static let celebrationsEnabled = "celebrationsEnabled"
+        static let credentialSource = "credentialSource"
 
         static func celebrationEnabled(_ trigger: CelebrationTrigger) -> String {
             "celebration.\(trigger.rawValue).enabled"
@@ -35,6 +51,12 @@ final class AppSettings {
     /// only take effect while this is on; they carry sensible defaults for when it is.
     var celebrationsEnabled: Bool {
         didSet { defaults.set(celebrationsEnabled, forKey: Keys.celebrationsEnabled) }
+    }
+
+    /// Defaults to `.claudeCode` so existing installs behave exactly as before; the user
+    /// opts into self-contained sign-in from Settings.
+    var credentialSource: CredentialSource {
+        didSet { defaults.set(credentialSource.rawValue, forKey: Keys.credentialSource) }
     }
 
     // Per-trigger enabled/reaction live in dictionaries (rather than six explicit
@@ -100,7 +122,8 @@ final class AppSettings {
             Keys.warningThresholdPercent: 75.0,
             Keys.criticalThresholdPercent: 90.0,
             Keys.showMenuBarFlame: true,
-            Keys.celebrationsEnabled: false
+            Keys.celebrationsEnabled: false,
+            Keys.credentialSource: CredentialSource.claudeCode.rawValue
         ]
         // Each trigger defaults to enabled with its suggested effect, so once the
         // master switch is turned on the mapping is ready without further setup.
@@ -113,6 +136,8 @@ final class AppSettings {
         useClaudeSeverity = defaults.bool(forKey: Keys.useClaudeSeverity)
         showMenuBarFlame = defaults.bool(forKey: Keys.showMenuBarFlame)
         celebrationsEnabled = defaults.bool(forKey: Keys.celebrationsEnabled)
+        credentialSource = defaults.string(forKey: Keys.credentialSource)
+            .flatMap(CredentialSource.init(rawValue:)) ?? .claudeCode
 
         var enabledStore: [String: Bool] = [:]
         var reactionStore: [String: ReactionChoice] = [:]

@@ -6,6 +6,7 @@ struct ClaudeBarApp: App {
     @State private var model = UsageViewModel()
     @State private var settings = AppSettings()
     @State private var celebrations = CelebrationController()
+    @State private var login = OAuthLoginController()
 
     init() {
         // Backstop for `swift run`: there's no Info.plist LSUIElement in that context
@@ -23,7 +24,7 @@ struct ClaudeBarApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(settings: settings, model: model)
+            SettingsView(settings: settings, model: model, login: login)
         }
     }
 }
