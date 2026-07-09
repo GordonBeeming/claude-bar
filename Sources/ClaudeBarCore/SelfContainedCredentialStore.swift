@@ -6,6 +6,8 @@ import Security
 /// Code's item triggers — that's the whole point of self-contained sign-in. Refreshes are
 /// our token's, so they never disturb Claude Code's credentials.
 public struct SelfContainedCredentialStore: Sendable {
+    public enum StoreError: Error { case keychainWriteFailed }
+
     private let service: String
     private let account = "oauth-tokens"
     private let client: OAuthClient
@@ -46,7 +48,10 @@ public struct SelfContainedCredentialStore: Sendable {
         SecItemDelete(base as CFDictionary)
         var attributes = base
         attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        // AfterFirstUnlock (not WhenUnlocked): the menu bar app polls on a timer that keeps
+        // running while the screen is locked, so it must be able to read the token then.
+        // ThisDeviceOnly keeps the credential from syncing to iCloud Keychain or a backup.
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 
@@ -70,7 +75,9 @@ public struct SelfContainedCredentialStore: Sendable {
             return tokens.accessToken
         }
         let refreshed = try await client.refresh(refreshToken: tokens.refreshToken)
-        save(refreshed)
+        // A refresh rotates the refresh token, so a failed save would strand us: the old
+        // token is now invalid and the new one isn't persisted. Fail loudly instead.
+        guard save(refreshed) else { throw StoreError.keychainWriteFailed }
         return refreshed.accessToken
     }
 }

@@ -9,12 +9,10 @@ public struct PKCE: Sendable {
     public let verifier: String
     public let challenge: String
 
-    /// Generates a fresh pair from 32 random bytes. `SystemRandomNumberGenerator` is a CSPRNG
-    /// on Apple platforms, which is what PKCE requires.
+    /// Generates a fresh pair from 32 random bytes. `UInt8.random(in:)` draws from the
+    /// system CSPRNG on Apple platforms, which is what PKCE requires.
     public init() {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        var rng = SystemRandomNumberGenerator()
-        for i in bytes.indices { bytes[i] = rng.next() }
+        let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max) }
         let verifier = Data(bytes).base64URLEncodedString()
         self.verifier = verifier
 

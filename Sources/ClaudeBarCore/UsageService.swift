@@ -32,9 +32,14 @@ public actor UsageService {
                     return response
                 }
             } catch UsageClient.UsageError.unauthorized {
-                logger.notice("self-contained token rejected (401) — falling back to Claude Code token")
+                // Token is genuinely rejected — drop it so we don't re-send a known-bad token
+                // every poll; the user re-signs in to restore self-contained mode.
+                selfContained.clear()
+                logger.notice("self-contained token rejected (401) — cleared it, falling back to Claude Code token")
             } catch OAuthClient.OAuthError.http(let status) where status == 400 || status == 401 {
-                logger.notice("self-contained refresh rejected (\(status, privacy: .public)) — falling back to Claude Code token")
+                // Refresh token is expired/revoked — same deal, drop the dead pair.
+                selfContained.clear()
+                logger.notice("self-contained refresh rejected (\(status, privacy: .public)) — cleared it, falling back to Claude Code token")
             }
             // Any other error (network/server/timeout) propagates — no needless Keychain hit.
         }

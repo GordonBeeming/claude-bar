@@ -93,7 +93,7 @@ final class OAuthLoginController {
         case OAuthClient.OAuthError.malformedResponse:
             return "Unexpected response from Anthropic. Try again."
         case OAuthClient.OAuthError.http(429):
-            return "Anthropic is rate-limiting sign-in right now. Wait a minute, then Try again."
+            return "Anthropic is rate-limiting sign-in right now. Wait a minute, then try again."
         case OAuthClient.OAuthError.http(400):
             return "That code didn't take (expired or already used). Try again for a fresh one."
         case OAuthClient.OAuthError.http(let status):

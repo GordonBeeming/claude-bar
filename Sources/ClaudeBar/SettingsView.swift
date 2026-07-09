@@ -107,7 +107,7 @@ struct SettingsView: View {
                         pastedCode = ""
                         Task { await login.submitCode(code) }
                     }
-                    .disabled(pastedCode.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(pastedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
 
@@ -139,14 +139,15 @@ struct SettingsView: View {
                 // to start over.
                 if login.hasPendingSignIn {
                     HStack {
-                        TextField("Paste code", text: $pastedCode)
+                        TextField("Paste code", text: codeBinding)
                             .textFieldStyle(.roundedBorder)
+                            .lineLimit(1)
                         Button("Submit") {
                             let code = pastedCode
                             pastedCode = ""
                             Task { await login.submitCode(code) }
                         }
-                        .disabled(pastedCode.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(pastedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     Button("Restart browser sign-in") { login.startSignIn() }
                 } else {
