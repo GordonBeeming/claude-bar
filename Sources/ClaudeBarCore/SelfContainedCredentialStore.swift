@@ -1,0 +1,93 @@
+import Foundation
+import Security
+
+/// Reads and writes *our own* OAuth token pair in a Keychain item this app created. Because
+/// we own the item, macOS never shows the cross-app consent prompt that reading Claude
+/// Code's item triggers — that's the whole point of self-contained sign-in. Refreshes are
+/// our token's, so they never disturb Claude Code's credentials.
+public struct SelfContainedCredentialStore: Sendable {
+    public enum StoreError: Error { case keychainWriteFailed }
+
+    private let service: String
+    private let account = "oauth-tokens"
+    private let client: OAuthClient
+
+    public init(service: String = "com.gordonbeeming.ClaudeBar.oauth", client: OAuthClient = OAuthClient()) {
+        self.service = service
+        self.client = client
+    }
+
+    public var isSignedIn: Bool { load() != nil }
+
+    public func load() -> OAuthTokens? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data else {
+            return nil
+        }
+        return try? JSONDecoder().decode(OAuthTokens.self, from: data)
+    }
+
+    /// Persists the pair, replacing any existing one. Returns false if the Keychain write
+    /// failed so the caller can surface it rather than silently believing sign-in worked.
+    ///
+    /// Updates in place rather than delete-then-add: a refresh rotates the single-use refresh
+    /// token, so if a plain `SecItemAdd` failed after the old item was already deleted we'd
+    /// have thrown away the only durable token. `SecItemUpdate` leaves the existing item
+    /// intact when it fails, and we only `SecItemAdd` when there's nothing to update.
+    @discardableResult
+    public func save(_ tokens: OAuthTokens) -> Bool {
+        guard let data = try? JSONEncoder().encode(tokens) else { return false }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        // AfterFirstUnlock (not WhenUnlocked): the menu bar app polls on a timer that keeps
+        // running while the screen is locked, so it must be able to read the token then.
+        // ThisDeviceOnly keeps the credential from syncing to iCloud Keychain or a backup.
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
+        guard updateStatus == errSecItemNotFound else { return false }
+
+        return SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil) == errSecSuccess
+    }
+
+    public func clear() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// The current access token, refreshing first when it's near expiry. Returns nil only
+    /// when there's no stored token (not signed in). A refresh failure is *thrown*, not
+    /// swallowed, so the caller can tell an auth rejection (fall back to Claude Code) apart
+    /// from a network/server error (fail the poll rather than needlessly hit Claude Code's
+    /// Keychain — which would prompt, then fail anyway because the network is down).
+    public func validAccessToken(now: Date = Date()) async throws -> String? {
+        guard let tokens = load() else { return nil }
+        guard OAuthClient.needsRefresh(expiresAt: tokens.expiresAt, now: now) else {
+            return tokens.accessToken
+        }
+        let refreshed = try await client.refresh(refreshToken: tokens.refreshToken)
+        // A refresh rotates the refresh token, so a failed save would strand us: the old
+        // token is now invalid and the new one isn't persisted. Fail loudly instead.
+        guard save(refreshed) else { throw StoreError.keychainWriteFailed }
+        return refreshed.accessToken
+    }
+}

@@ -26,7 +26,7 @@ That's the whole app. No cost tracking, no charts, no extras. The menu renders i
 brew install --cask gordonbeeming/tap/claude-bar
 ```
 
-Needs macOS 15+ on Apple Silicon, plus [Claude Code](https://claude.com/claude-code) installed and logged in — ClaudeBar reads its OAuth token from the Keychain (read-only; click **Always Allow** when macOS asks). It never writes or refreshes the token; that's Claude Code's job. If the token expires, ClaudeBar keeps showing the last known numbers with a hint to open Claude Code. macOS re-asks for that Keychain permission every so often — [Keychain access](#keychain-access) explains why.
+Needs macOS 15+ on Apple Silicon, plus [Claude Code](https://claude.com/claude-code) installed and logged in — ClaudeBar reads its OAuth token from the Keychain (read-only; click **Always Allow** when macOS asks). It never writes or refreshes the token; that's Claude Code's job. If the token expires, ClaudeBar keeps showing the last known numbers with a hint to open Claude Code. macOS re-asks for that Keychain permission every so often — [Keychain access](#keychain-access) explains why, and how self-contained sign-in stops it.
 
 ### From source
 
@@ -50,16 +50,19 @@ ClaudeBar polls `GET https://api.anthropic.com/api/oauth/usage` (once a minute, 
 
 ## Keychain access
 
-ClaudeBar reads one Keychain item — Claude Code's `Claude Code-credentials` — to get the OAuth token the usage endpoint needs. It only reads — it never writes the item, refreshes the token, or touches the refresh token.
+By default ClaudeBar reads one Keychain item — Claude Code's `Claude Code-credentials` — to get the OAuth token the usage endpoint needs. In this mode it only reads: it never writes the item, refreshes the token, or touches the refresh token.
 
 macOS gates that read behind a consent prompt. Click **Always Allow** and macOS trusts ClaudeBar for that item — until Claude Code next rotates its token. Claude Code refreshes its OAuth token a couple of times a day, and every refresh rewrites the Keychain item, which clears the item's list of trusted apps. So the prompt comes back and you grant it again. It isn't a bug in ClaudeBar or a setting that didn't save; macOS treats a rewritten item as new and re-checks who's allowed to read it.
 
-Both ways to stop the prompt are worse than living with it:
+### Stop the prompt: self-contained sign-in
 
-- **Refresh the token ourselves**, so ClaudeBar never depends on Claude Code's item. Anthropic's refresh tokens are single-use — refreshing rotates the token and invalidates the copy Claude Code is holding, which logs the CLI out and forces you to sign in again. A repeat click beats breaking Claude Code. (A sibling menu bar app hit exactly this: [CodexBar #1161](https://github.com/steipete/CodexBar/issues/1161).)
-- **Cache the token in memory**, so ClaudeBar reads the Keychain far less often. That leaves a live credential sitting in memory longer than any one request needs it, which widens the window for a memory dump to lift it. Not a trade worth making to skip a click.
+**Settings → Usage data source → Self-contained sign-in** does its own OAuth login and stores the token in a Keychain item ClaudeBar created. Because ClaudeBar owns that item, macOS never runs the cross-app consent prompt, and Claude Code's rotations don't touch it — so the prompt stops.
 
-So ClaudeBar reads on each poll, stays read-only, and wears the occasional prompt. Clicking **Always Allow** each time it reappears is the intended flow.
+It works because ClaudeBar now holds its own token pair: refreshing rotates *its* refresh token, never Claude Code's, so the CLI stays logged in. That's the trap the obvious "just refresh the token ourselves" idea falls into — Anthropic's refresh tokens are single-use, so refreshing Claude Code's copy logs the CLI out (an unrelated menu bar app hit exactly that: [CodexBar #1161](https://github.com/steipete/CodexBar/issues/1161)). Doing our own login avoids it. If the self-contained token ever fails, ClaudeBar falls back to Claude Code's token, so the worst case is the prompt you already know.
+
+One caveat: sign-in reuses Claude Code's own OAuth client, since there's no public third-party OAuth for this endpoint. It's the same "act as Claude Code" posture as the `claude-code` User-Agent ClaudeBar already sends, and it could break if Anthropic changes the flow — the fallback keeps the app working if it does.
+
+The default stays read-only and prompt-bearing; self-contained is opt-in.
 
 ## Dev loop
 
