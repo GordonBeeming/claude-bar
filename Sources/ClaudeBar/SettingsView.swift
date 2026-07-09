@@ -66,18 +66,22 @@ struct SettingsView: View {
             set: { settings.setReaction($0, for: trigger) }
         )
 
-        Toggle(trigger.displayName, isOn: enabled)
+        // Wrap in a VStack so the toggle and its effect row read as one grouped-form
+        // row on macOS rather than two disjointed rows.
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(trigger.displayName, isOn: enabled)
 
-        if enabled.wrappedValue {
-            HStack {
-                Picker("Effect", selection: reaction) {
-                    ForEach(ReactionChoice.allCases, id: \.self) { choice in
-                        Text(choice.displayName).tag(choice)
+            if enabled.wrappedValue {
+                HStack {
+                    Picker("Effect", selection: reaction) {
+                        ForEach(ReactionChoice.allCases, id: \.self) { choice in
+                            Text(choice.displayName).tag(choice)
+                        }
                     }
+                    Button("Test") { model.previewCelebration(reaction.wrappedValue) }
                 }
-                Button("Test") { model.previewCelebration(reaction.wrappedValue) }
+                .padding(.leading, 16)
             }
-            .padding(.leading, 16)
         }
     }
 }

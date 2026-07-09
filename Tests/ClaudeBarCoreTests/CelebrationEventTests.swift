@@ -38,6 +38,15 @@ struct CelebrationEventTests {
         #expect(detectCelebrationEvents(previous: previous, current: [session], now: fixedNow).isEmpty)
     }
 
+    @Test func smallResetsAtDriftIsNotAReset() {
+        // A few seconds of forward jitter in `resetsAt` must not read as a reset — a real
+        // rollover jumps by most of the window, not a handful of seconds.
+        let base = fixedNow.addingTimeInterval(2 * 3600)
+        let drifted = limit(id: "session", group: "session", percent: 41, resetsAt: base.addingTimeInterval(3))
+        let previous = ["session": LimitSnapshot(resetsAt: base, percent: 40, overPace: false)]
+        #expect(detectCelebrationEvents(previous: previous, current: [drifted], now: fixedNow).isEmpty)
+    }
+
     @Test func weeklyResetRoutesToWeeklyTrigger() {
         let weekly = limit(id: "weekly_all", group: "weekly", percent: 1, resetsAt: fixedNow.addingTimeInterval(7 * 86400))
         let previous = ["weekly_all": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(-3600), percent: 95, overPace: true)]

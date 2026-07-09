@@ -76,17 +76,17 @@ public func detectCelebrationEvents(
     current: [UsageLimit],
     now: Date
 ) -> Set<CelebrationTrigger> {
-    // A window reset shows up as `resetsAt` jumping forward by ~a whole window. The
-    // epsilon guards against sub-second jitter in the API's timestamps counting as a
-    // reset; a real rollover moves it by hours or days.
-    let resetEpsilon: TimeInterval = 1
-
     var fired: Set<CelebrationTrigger> = []
     for limit in current {
         guard let prev = previous[limit.id] else { continue }
 
+        // A real rollover pushes `resetsAt` forward by ~a whole window, so require the
+        // jump to clear half the window's length. That ignores the sub-minute clock
+        // drift / timestamp jitter the API can show between polls, which a tight fixed
+        // epsilon would mistake for a reset.
         if let prevReset = prev.resetsAt, let curReset = limit.resetsAt,
-           curReset.timeIntervalSince(prevReset) > resetEpsilon {
+           let windowDuration = UsageWindow.duration(forGroup: limit.group),
+           curReset.timeIntervalSince(prevReset) > windowDuration / 2 {
             switch limit.group {
             case "session": fired.insert(.sessionReset)
             case "weekly": fired.insert(.weeklyReset)
