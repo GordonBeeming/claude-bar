@@ -30,7 +30,7 @@ struct LimitRowView: View {
             }
 
             if isOverPace {
-                Text("🔥 Ahead of pace by \(Int(paceDelta.rounded()))%")
+                Text("🔥 Ahead of pace by \(aheadOfPacePercent)%")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -87,7 +87,15 @@ struct LimitRowView: View {
     private var barAccessibilityValue: String {
         let base = "\(Int(limit.percent.rounded())) percent"
         guard isOverPace else { return base }
-        return base + ", ahead of pace by \(Int(paceDelta.rounded())) percent"
+        return base + ", ahead of pace by \(aheadOfPacePercent) percent"
+    }
+
+    // Only meaningful when over pace; guard so a stray read when on/under pace can't
+    // report a misleading "1". Floored at 1 otherwise, since once usage is past the
+    // line the delta can round to 0 and "ahead of pace by 0%" reads as a bug.
+    private var aheadOfPacePercent: Int {
+        guard isOverPace else { return 0 }
+        return max(1, Int(paceDelta.rounded()))
     }
 
     private var clampedPercent: Double {
