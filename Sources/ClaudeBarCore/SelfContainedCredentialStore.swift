@@ -37,22 +37,32 @@ public struct SelfContainedCredentialStore: Sendable {
 
     /// Persists the pair, replacing any existing one. Returns false if the Keychain write
     /// failed so the caller can surface it rather than silently believing sign-in worked.
+    ///
+    /// Updates in place rather than delete-then-add: a refresh rotates the single-use refresh
+    /// token, so if a plain `SecItemAdd` failed after the old item was already deleted we'd
+    /// have thrown away the only durable token. `SecItemUpdate` leaves the existing item
+    /// intact when it fails, and we only `SecItemAdd` when there's nothing to update.
     @discardableResult
     public func save(_ tokens: OAuthTokens) -> Bool {
         guard let data = try? JSONEncoder().encode(tokens) else { return false }
-        let base: [String: Any] = [
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(base as CFDictionary)
-        var attributes = base
-        attributes[kSecValueData as String] = data
         // AfterFirstUnlock (not WhenUnlocked): the menu bar app polls on a timer that keeps
         // running while the screen is locked, so it must be able to read the token then.
         // ThisDeviceOnly keeps the credential from syncing to iCloud Keychain or a backup.
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
+        guard updateStatus == errSecItemNotFound else { return false }
+
+        return SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil) == errSecSuccess
     }
 
     public func clear() {
