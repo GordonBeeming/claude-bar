@@ -145,13 +145,14 @@ final class UsageViewModel {
 
     private func processCelebrations(for limits: [UsageLimit], now: Date) {
         let snapshots = Dictionary(
-            limits.map { ($0.id, LimitSnapshot(
+            limits.map { ($0.celebrationKey, LimitSnapshot(
                 resetsAt: $0.resetsAt,
                 percent: $0.percent,
                 overPace: UsageWindow.isOverPace(for: $0, now: now)
             )) },
-            // Scoped limits missing a model name can collide on `id`; last one wins,
-            // which is fine — the snapshot only feeds reset/pace-edge detection.
+            // `celebrationKey` (kind + model id + name) keeps distinct models apart, unlike
+            // `id`. Two limits that still share a key are indistinguishable; last one wins
+            // here and the detector skips ambiguous keys, so neither can fire a phantom reset.
             uniquingKeysWith: { _, latest in latest }
         )
         defer { previousSnapshots = snapshots }
@@ -167,11 +168,15 @@ final class UsageViewModel {
         // Log any material drop — with prev/cur percent and whether it met the reset rule
         // — so ad-hoc server-side resets and threshold tuning stay observable in Console
         // instead of needing live-API detective work to reconstruct.
+        // Surface near-misses too: this floor sits below the reset threshold on purpose, so
+        // a drop that didn't quite reset still shows up for tuning.
+        let diagnosticDropFloor = 15.0
         for limit in limits where UsageWindow.duration(forGroup: limit.group) != nil {
-            guard let prev = previousSnapshots[limit.id] else { continue }
+            guard let prev = previousSnapshots[limit.celebrationKey] else { continue }
             let drop = prev.percent - limit.percent
-            guard drop > 15 else { continue }
-            let countedAsReset = drop > 25 && limit.percent < 10
+            guard drop > diagnosticDropFloor else { continue }
+            // Reuse the detector's own thresholds so the log can't drift from what fires.
+            let countedAsReset = drop > resetDropThreshold && limit.percent < resetFloor
             logger.notice("""
                 usage dropped \(drop, privacy: .public) points for \
                 \(limit.id, privacy: .public) — \(prev.percent, privacy: .public)% → \

@@ -25,6 +25,16 @@ public struct UsageLimit: Decodable, Sendable, Identifiable {
         kind + (scope?.model?.displayName ?? "")
     }
 
+    // A stronger identity for celebration snapshots than `id`: two scoped limits with no
+    // display name collapse to the same `id`, which let a high-% previous snapshot get
+    // compared against a different low-% current limit and fire a phantom reset. Folding in
+    // the model id (and a separator) keeps distinct models apart; the SOH separator can't
+    // appear in a kind/id/name, so keys never alias by concatenation. When two limits are
+    // still identical here they're genuinely indistinguishable — the detector skips those.
+    public var celebrationKey: String {
+        [kind, scope?.model?.id ?? "", scope?.model?.displayName ?? ""].joined(separator: "\u{1}")
+    }
+
     public init(
         kind: String,
         group: String? = nil,

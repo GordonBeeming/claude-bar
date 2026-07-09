@@ -70,9 +70,10 @@ public struct LimitSnapshot: Sendable {
 
 /// How far usage must fall between polls to count as a reset, and the level it must land
 /// under. `resetsAt` jumps proved too noisy to key on (phantom weekly fireworks, hourly
-/// phantom session confetti), so detection keys on the drop in usage instead.
-private let resetDropThreshold = 25.0
-private let resetFloor = 10.0
+/// phantom session confetti), so detection keys on the drop in usage instead. Public so the
+/// diagnostic logging can reuse the same numbers instead of duplicating them.
+public let resetDropThreshold = 25.0
+public let resetFloor = 10.0
 
 /// Pure diff of the previous poll against the current one → the set of triggers that
 /// just fired. A limit with no `previous` snapshot (first-seen, or the very first poll
@@ -83,8 +84,19 @@ public func detectCelebrationEvents(
     now: Date
 ) -> Set<CelebrationTrigger> {
     var fired: Set<CelebrationTrigger> = []
+
+    // Keys that appear on more than one limit this poll are genuinely indistinguishable
+    // (e.g. two scoped limits with no model name); we can't tell which previous snapshot
+    // belongs to which, so we skip celebrating those rather than guess and misfire.
+    let ambiguousKeys = Set(
+        Dictionary(grouping: current, by: \.celebrationKey)
+            .filter { $0.value.count > 1 }
+            .keys
+    )
+
     for limit in current {
-        guard let prev = previous[limit.id] else { continue }
+        guard !ambiguousKeys.contains(limit.celebrationKey) else { continue }
+        guard let prev = previous[limit.celebrationKey] else { continue }
 
         // A reset is a fresh allowance, and usage only ever climbs within a window — so a
         // sharp drop is the unambiguous signal that the window rolled, including the
