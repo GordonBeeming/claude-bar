@@ -6,13 +6,16 @@ let package = Package(
     platforms: [
         .macOS(.v15)
     ],
+    dependencies: [
+        .package(url: "https://github.com/gordonbeeming/mac-reactions", from: "0.1.0")
+    ],
     targets: [
         .target(
             name: "ClaudeBarCore"
         ),
         .executableTarget(
             name: "ClaudeBar",
-            dependencies: ["ClaudeBarCore"]
+            dependencies: ["ClaudeBarCore", .product(name: "MacReactions", package: "mac-reactions")]
         ),
         .testTarget(
             name: "ClaudeBarCoreTests",

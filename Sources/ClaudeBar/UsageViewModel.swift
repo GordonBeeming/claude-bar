@@ -31,6 +31,14 @@ final class UsageViewModel {
     nonisolated(unsafe) private var wakeObserver: NSObjectProtocol?
     private let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "UsageViewModel")
 
+    // Celebrations: compare each poll's limits against the last to spot resets and the
+    // over-pace crossing. Kept out of `@Observable` tracking (plain refs, not observed
+    // state) — nothing in the UI renders from them.
+    @ObservationIgnored private var previousSnapshots: [String: LimitSnapshot] = [:]
+    @ObservationIgnored private var hasSeededCelebrations = false
+    @ObservationIgnored private weak var settings: AppSettings?
+    @ObservationIgnored private var celebrations: CelebrationController?
+
     private static let didApplyDefaultLaunchAtLoginKey = "didApplyDefaultLaunchAtLogin"
     private static let staleThreshold: TimeInterval = 30
 
@@ -100,6 +108,7 @@ final class UsageViewModel {
             lastUpdated = Date()
             authState = .ok
             lastError = nil
+            processCelebrations(for: response.limits, now: Date())
         } catch UsageClient.UsageError.unauthorized {
             authState = .tokenExpired
             lastError = nil
@@ -119,6 +128,52 @@ final class UsageViewModel {
         let isStale = lastUpdated.map { Date().timeIntervalSince($0) > Self.staleThreshold } ?? true
         guard isStale else { return }
         Task { await refresh() }
+    }
+
+    /// Wires up celebrations. Called from the menu-bar label's `.onAppear` (which holds
+    /// both the settings and the controller) alongside `startPolling()`.
+    func attachCelebrations(settings: AppSettings, controller: CelebrationController) {
+        self.settings = settings
+        self.celebrations = controller
+    }
+
+    /// Plays an effect immediately, ignoring the enable/seed gating — for the Settings
+    /// "Test" buttons.
+    func previewCelebration(_ choice: ReactionChoice) {
+        celebrations?.play(choice)
+    }
+
+    private func processCelebrations(for limits: [UsageLimit], now: Date) {
+        let snapshots = Dictionary(
+            limits.map { ($0.id, LimitSnapshot(
+                resetsAt: $0.resetsAt,
+                percent: $0.percent,
+                overPace: UsageWindow.isOverPace(for: $0, now: now)
+            )) },
+            // Scoped limits missing a model name can collide on `id`; last one wins,
+            // which is fine — the snapshot only feeds reset/pace-edge detection.
+            uniquingKeysWith: { _, latest in latest }
+        )
+        defer { previousSnapshots = snapshots }
+
+        // The first successful poll only seeds the baseline — never fires. This also
+        // means a relaunch won't replay a reset that happened while the app was closed.
+        guard hasSeededCelebrations else {
+            hasSeededCelebrations = true
+            return
+        }
+
+        guard let settings, settings.celebrationsEnabled else { return }
+
+        let events = detectCelebrationEvents(previous: previousSnapshots, current: limits, now: now)
+        let reactions = Set(
+            events
+                .filter { settings.celebrationEnabled(for: $0) }
+                .map { settings.reaction(for: $0) }
+        )
+        for reaction in reactions {
+            celebrations?.play(reaction)
+        }
     }
 
     private func applyDefaultLaunchAtLoginIfNeeded() {

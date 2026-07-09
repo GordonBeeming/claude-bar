@@ -1,0 +1,15 @@
+{
+  "originHash" : "176064fe31496551b961ca7d40b2293e54cc10f36ac213fd9adcbc9aa325ac2e",
+  "pins" : [
+    {
+      "identity" : "mac-reactions",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gordonbeeming/mac-reactions",
+      "state" : {
+        "revision" : "ce35db8d0afdfccd1158f976ed92a8963d2d412a",
+        "version" : "0.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

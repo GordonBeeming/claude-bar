@@ -1,3 +1,4 @@
+import ClaudeBarCore
 import SwiftUI
 
 struct SettingsView: View {
@@ -30,6 +31,20 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Celebrations") {
+                Toggle("Enable celebrations", isOn: $settings.celebrationsEnabled)
+
+                if settings.celebrationsEnabled {
+                    ForEach(CelebrationTrigger.allCases, id: \.self) { trigger in
+                        celebrationRow(trigger)
+                    }
+                } else {
+                    Text("Play a full-screen reaction when a usage window resets or your weekly burns over pace.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("General") {
                 Toggle("Launch at login", isOn: $model.launchAtLogin)
                     .disabled(!model.launchAtLoginAvailable)
@@ -38,5 +53,31 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 380)
+    }
+
+    @ViewBuilder
+    private func celebrationRow(_ trigger: CelebrationTrigger) -> some View {
+        let enabled = Binding(
+            get: { settings.celebrationEnabled(for: trigger) },
+            set: { settings.setCelebrationEnabled($0, for: trigger) }
+        )
+        let reaction = Binding(
+            get: { settings.reaction(for: trigger) },
+            set: { settings.setReaction($0, for: trigger) }
+        )
+
+        Toggle(trigger.displayName, isOn: enabled)
+
+        if enabled.wrappedValue {
+            HStack {
+                Picker("Effect", selection: reaction) {
+                    ForEach(ReactionChoice.allCases, id: \.self) { choice in
+                        Text(choice.displayName).tag(choice)
+                    }
+                }
+                Button("Test") { model.previewCelebration(reaction.wrappedValue) }
+            }
+            .padding(.leading, 16)
+        }
     }
 }

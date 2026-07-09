@@ -5,6 +5,7 @@ import SwiftUI
 struct ClaudeBarApp: App {
     @State private var model = UsageViewModel()
     @State private var settings = AppSettings()
+    @State private var celebrations = CelebrationController()
 
     init() {
         // Backstop for `swift run`: there's no Info.plist LSUIElement in that context
@@ -17,7 +18,7 @@ struct ClaudeBarApp: App {
         MenuBarExtra {
             UsageMenuView(model: model, settings: settings)
         } label: {
-            MenuBarLabelView(model: model, settings: settings)
+            MenuBarLabelView(model: model, settings: settings, celebrations: celebrations)
         }
         .menuBarExtraStyle(.window)
 
