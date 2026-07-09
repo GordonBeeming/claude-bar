@@ -23,33 +23,40 @@ struct CelebrationEventTests {
         #expect(events.isEmpty)
     }
 
-    @Test func sessionResetFiresOnForwardJump() {
+    @Test func sessionResetFiresOnUsageDrop() {
+        // Usage fell 88% → 1%: a fresh allowance.
         let session = limit(id: "session", group: "session", percent: 1, resetsAt: fixedNow.addingTimeInterval(5 * 3600))
-        // Previous window ended an hour ago; the new one ends 5h out → rolled over.
         let previous = ["session": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(-3600), percent: 88, overPace: false)]
-        let events = detectCelebrationEvents(previous: previous, current: [session], now: fixedNow)
-        #expect(events == [.sessionReset])
+        #expect(detectCelebrationEvents(previous: previous, current: [session], now: fixedNow) == [.sessionReset])
     }
 
-    @Test func noResetWhenResetsAtUnchanged() {
+    @Test func usageClimbIsNotAReset() {
+        // Usage rising within a window is the normal case — never a reset.
         let reset = fixedNow.addingTimeInterval(2 * 3600)
         let session = limit(id: "session", group: "session", percent: 40, resetsAt: reset)
         let previous = ["session": LimitSnapshot(resetsAt: reset, percent: 30, overPace: false)]
         #expect(detectCelebrationEvents(previous: previous, current: [session], now: fixedNow).isEmpty)
     }
 
-    @Test func smallResetsAtDriftIsNotAReset() {
-        // A few seconds of forward jitter in `resetsAt` must not read as a reset — a real
-        // rollover jumps by most of the window, not a handful of seconds.
-        let base = fixedNow.addingTimeInterval(2 * 3600)
-        let drifted = limit(id: "session", group: "session", percent: 41, resetsAt: base.addingTimeInterval(3))
-        let previous = ["session": LimitSnapshot(resetsAt: base, percent: 40, overPace: false)]
-        #expect(detectCelebrationEvents(previous: previous, current: [drifted], now: fixedNow).isEmpty)
+    @Test func smallDropIsNotAReset() {
+        // A 20-point dip (40% → 20%) doesn't clear the 25-point threshold.
+        let session = limit(id: "session", group: "session", percent: 20, resetsAt: fixedNow.addingTimeInterval(2 * 3600))
+        let previous = ["session": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(2 * 3600), percent: 40, overPace: false)]
+        #expect(detectCelebrationEvents(previous: previous, current: [session], now: fixedNow).isEmpty)
     }
 
-    @Test func weeklyResetRoutesToWeeklyTrigger() {
+    @Test func dropNotBelowFloorIsNotAReset() {
+        // A big drop (90% → 30%) that doesn't land under 10% isn't a reset — a reset
+        // empties the window.
+        let weekly = limit(id: "weekly_all", group: "weekly", percent: 30, resetsAt: fixedNow.addingTimeInterval(7 * 86400))
+        // overPace already true last poll → no over-pace edge, isolating the reset check.
+        let previous = ["weekly_all": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(7 * 86400), percent: 90, overPace: true)]
+        #expect(detectCelebrationEvents(previous: previous, current: [weekly], now: fixedNow).isEmpty)
+    }
+
+    @Test func weeklyResetFiresOnUsageDrop() {
         let weekly = limit(id: "weekly_all", group: "weekly", percent: 1, resetsAt: fixedNow.addingTimeInterval(7 * 86400))
-        let previous = ["weekly_all": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(-3600), percent: 95, overPace: true)]
+        let previous = ["weekly_all": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(7 * 86400), percent: 95, overPace: true)]
         #expect(detectCelebrationEvents(previous: previous, current: [weekly], now: fixedNow) == [.weeklyReset])
     }
 
@@ -58,11 +65,21 @@ struct CelebrationEventTests {
         let weeklyAll = limit(id: "weekly_all", group: "weekly", percent: 0, resetsAt: fixedNow.addingTimeInterval(7 * 86400))
         let weeklyFable = limit(id: "weekly_scoped", group: "weekly", percent: 0, resetsAt: fixedNow.addingTimeInterval(7 * 86400), model: "Fable")
         let previous = [
-            "weekly_all": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(-3600), percent: 90, overPace: false),
-            "weekly_scopedFable": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(-3600), percent: 50, overPace: false)
+            "weekly_all": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(7 * 86400), percent: 90, overPace: false),
+            "weekly_scopedFable": LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(7 * 86400), percent: 50, overPace: false)
         ]
         let events = detectCelebrationEvents(previous: previous, current: [weeklyAll, weeklyFable], now: fixedNow)
         #expect(events == [.weeklyReset])
+    }
+
+    @Test func resetsAtJumpWithoutUsageDropIsNotAReset() {
+        // The old phantom: resetsAt lurches a whole week further out while usage is
+        // unchanged. Usage didn't drop, so it must not fire a reset.
+        let future = fixedNow.addingTimeInterval(5 * 86400)
+        let weekly = limit(id: "weekly_all", group: "weekly", percent: 25,
+                           resetsAt: future.addingTimeInterval(7 * 86400))
+        let previous = ["weekly_all": LimitSnapshot(resetsAt: future, percent: 25, overPace: true)]
+        #expect(!detectCelebrationEvents(previous: previous, current: [weekly], now: fixedNow).contains(.weeklyReset))
     }
 
     @Test func overPaceFiresOnRisingEdgeOnly() {

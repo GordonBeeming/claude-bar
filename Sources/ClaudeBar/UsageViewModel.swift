@@ -163,6 +163,23 @@ final class UsageViewModel {
             return
         }
 
+        // Usage falling between polls is the reset signal (usage otherwise only climbs).
+        // Log any material drop — with prev/cur percent and whether it met the reset rule
+        // — so ad-hoc server-side resets and threshold tuning stay observable in Console
+        // instead of needing live-API detective work to reconstruct.
+        for limit in limits where UsageWindow.duration(forGroup: limit.group) != nil {
+            guard let prev = previousSnapshots[limit.id] else { continue }
+            let drop = prev.percent - limit.percent
+            guard drop > 15 else { continue }
+            let countedAsReset = drop > 25 && limit.percent < 10
+            logger.notice("""
+                usage dropped \(drop, privacy: .public) points for \
+                \(limit.id, privacy: .public) — \(prev.percent, privacy: .public)% → \
+                \(limit.percent, privacy: .public)% — \
+                \(countedAsReset ? "counted as reset" : "below reset threshold", privacy: .public)
+                """)
+        }
+
         guard let settings, settings.celebrationsEnabled else { return }
 
         let events = detectCelebrationEvents(previous: previousSnapshots, current: limits, now: now)
@@ -171,6 +188,10 @@ final class UsageViewModel {
                 .filter { settings.celebrationEnabled(for: $0) }
                 .map { settings.reaction(for: $0) }
         )
+        if !reactions.isEmpty {
+            let fired = events.map(\.rawValue).sorted().joined(separator: ",")
+            logger.notice("celebrations fired: \(fired, privacy: .public)")
+        }
         for reaction in reactions {
             celebrations?.play(reaction)
         }
