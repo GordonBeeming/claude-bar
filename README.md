@@ -20,6 +20,8 @@ ClaudeBar shows your Claude plan's usage limits in the menu bar — the same num
 
 That's the whole app. No cost tracking, no charts, no extras. The menu renders instantly from cached data and refreshes in the background.
 
+> Looking for the same simple menu bar experience for Codex? See [CodexBar](https://github.com/GordonBeeming/codex-bar).
+
 ## Install
 
 ```sh
