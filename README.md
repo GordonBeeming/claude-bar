@@ -22,6 +22,14 @@ That's the whole app. No cost tracking, no charts, no extras. The menu renders i
 
 > Looking for the same simple menu bar experience for Codex? See [CodexBar](https://github.com/GordonBeeming/codex-bar).
 
+## Preview
+
+<p align="center">
+  <a href="docs/screenshot.png">
+    <img src="docs/screenshot.png" width="720" alt="ClaudeBar menu showing usage limits" />
+  </a>
+</p>
+
 ## Install
 
 ```sh
