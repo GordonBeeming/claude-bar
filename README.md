@@ -25,7 +25,9 @@ That's the whole app. No cost tracking, no charts, no extras. The menu renders i
 ## Preview
 
 <p align="center">
-  <img src="docs/screenshot.png" width="720" alt="ClaudeBar menu showing usage limits" />
+  <a href="docs/screenshot.png">
+    <img src="docs/screenshot.png" width="720" alt="ClaudeBar menu showing usage limits" />
+  </a>
 </p>
 
 ## Install
