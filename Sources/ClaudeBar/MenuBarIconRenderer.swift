@@ -24,7 +24,7 @@ enum MenuBarIconRenderer {
     /// switched off in settings). When non-nil it also picks the flame's colour, so
     /// weekly over-pace can read hotter than a session/scoped one.
     static func image(percent: Int?, severity: Severity, flameColor: NSColor?) -> NSImage {
-        let symbolImage: NSImage? = claudeMark()
+        let symbolImage: NSImage? = claudeMark
 
         // No percent means no pace signal either — there's nothing to be "ahead" of.
         let flameSymbol = (percent != nil ? flameColor : nil).map { flameImage(color: $0) } ?? nil
@@ -78,9 +78,11 @@ enum MenuBarIconRenderer {
         return composed
     }
 
-    /// Decodes the embedded Claude logomark as a template image sized to 16pt. Falls back to
-    /// the `asterisk` symbol only if the embedded data ever fails to decode.
-    private static func claudeMark() -> NSImage {
+    /// The embedded Claude logomark, decoded once, as a template image sized to 16pt. Falls
+    /// back to the `asterisk` symbol only if the embedded data ever fails to decode. Cached
+    /// because the icon re-renders on every poll and the decode/setup only needs to happen
+    /// once (safe to share — the render path draws it without mutating it).
+    private static let claudeMark: NSImage = {
         let fallback = NSImage(systemSymbolName: "asterisk", accessibilityDescription: "Claude usage")
             ?? NSImage(size: NSSize(width: 16, height: 16))
         let image = Data(base64Encoded: claudeMarkTemplateBase64)
@@ -88,7 +90,7 @@ enum MenuBarIconRenderer {
         image.size = NSSize(width: 16, height: 16)
         image.isTemplate = true
         return image
-    }
+    }()
 
     /// The flame's colour comes from the over-pace *window*, not the severity — it's a
     /// burn-rate hint, so it doesn't follow the warning/critical tint.
