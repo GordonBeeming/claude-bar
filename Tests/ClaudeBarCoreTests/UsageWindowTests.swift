@@ -61,6 +61,12 @@ struct UsageWindowTests {
         #expect(UsageWindow.isOverPace(for: ahead, now: fixedNow))
     }
 
+    @Test func isOverPaceStartsAboveFivePercent() {
+        let resetsAt = fixedNow.addingTimeInterval(5 * 3600)
+        #expect(!UsageWindow.isOverPace(for: limit(group: "session", percent: 5, resetsAt: resetsAt), now: fixedNow))
+        #expect(UsageWindow.isOverPace(for: limit(group: "session", percent: 6, resetsAt: resetsAt), now: fixedNow))
+    }
+
     @Test func isOverPaceFalseAtOrBelowLine() {
         // Exactly on the line (50% used, 50% elapsed) and behind it (40%) are both not over pace.
         let onPace = limit(group: "session", percent: 50, resetsAt: fixedNow.addingTimeInterval(2.5 * 3600))
