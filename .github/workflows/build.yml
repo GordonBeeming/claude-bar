@@ -156,7 +156,8 @@ jobs:
             --password "${APPLE_APP_PASSWORD}" \
             --wait \
             --timeout 30m \
-            --output-format json | tee "${NOTARY_RESULT}"; then
+            --output-format json > "${NOTARY_RESULT}"; then
+            cat "${NOTARY_RESULT}" >&2
             SUBMISSION_ID="$(plutil -extract id raw -o - "${NOTARY_RESULT}" 2>/dev/null || true)"
             if [[ -n "${SUBMISSION_ID}" ]]; then
               xcrun notarytool log "${SUBMISSION_ID}" \
@@ -166,6 +167,7 @@ jobs:
             fi
             exit 1
           fi
+          cat "${NOTARY_RESULT}"
 
           xcrun stapler staple "${DMG_PATH}"
           xcrun stapler validate "${DMG_PATH}"
