@@ -146,11 +146,13 @@ final class UsageViewModel {
 
     private func processCelebrations(for limits: [UsageLimit], now: Date) {
         let snapshots = Dictionary(
-            limits.map { ($0.celebrationKey, LimitSnapshot(
-                resetsAt: $0.resetsAt,
-                percent: $0.percent,
-                overPace: UsageWindow.isOverPace(for: $0, now: now)
-            )) },
+            limits.map { limit in
+                (limit.celebrationKey, LimitSnapshot.next(
+                    after: previousSnapshots[limit.celebrationKey],
+                    for: limit,
+                    now: now
+                ))
+            },
             // `celebrationKey` (kind + model id + name) keeps distinct models apart, unlike
             // `id`. Two limits that still share a key are indistinguishable; last one wins
             // here and the detector skips ambiguous keys, so neither can fire a phantom reset.

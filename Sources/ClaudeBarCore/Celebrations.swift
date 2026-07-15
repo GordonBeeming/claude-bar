@@ -57,14 +57,34 @@ public enum CelebrationTrigger: String, CaseIterable, Sendable {
 /// What a limit looked like on the previous poll, enough to detect the transitions
 /// that fire a celebration without re-deriving them from the raw limit each time.
 public struct LimitSnapshot: Sendable {
+    private static let rearmBufferPercentagePoints = 1.0
+
     public let resetsAt: Date?
     public let percent: Double
-    public let overPace: Bool
+    public let overPaceLatched: Bool
 
-    public init(resetsAt: Date?, percent: Double, overPace: Bool) {
+    public init(resetsAt: Date?, percent: Double, overPaceLatched: Bool) {
         self.resetsAt = resetsAt
         self.percent = percent
-        self.overPace = overPace
+        self.overPaceLatched = overPaceLatched
+    }
+
+    public static func next(after previous: Self?, for limit: UsageLimit, now: Date) -> Self {
+        let didReset = previous.map {
+            $0.percent - limit.percent > resetDropThreshold && limit.percent < resetFloor
+        } ?? false
+        let isOverPace = UsageWindow.isOverPace(for: limit, now: now)
+        let isWithinRearmBuffer = UsageWindow.isOverPace(
+            for: limit,
+            now: now,
+            marginPercent: -rearmBufferPercentagePoints
+        )
+        return Self(
+            resetsAt: limit.resetsAt,
+            percent: limit.percent,
+            overPaceLatched: isOverPace
+                || (!didReset && isWithinRearmBuffer && previous?.overPaceLatched == true)
+        )
     }
 }
 
@@ -105,7 +125,8 @@ public func detectCelebrationEvents(
         // sit under `resetFloor`, so a mid-range dip can't trip it. `resetsAt` is left out
         // of reset detection entirely (it stays only for pace) because its jumps are noisy
         // — a transient API value or a scoped-limit `id` collision fired phantom resets.
-        if prev.percent - limit.percent > resetDropThreshold, limit.percent < resetFloor {
+        let didReset = prev.percent - limit.percent > resetDropThreshold && limit.percent < resetFloor
+        if didReset {
             switch limit.group {
             case "session": fired.insert(.sessionReset)
             case "weekly": fired.insert(.weeklyReset)
@@ -115,7 +136,7 @@ public func detectCelebrationEvents(
 
         if limit.group == "weekly" {
             let curOverPace = UsageWindow.isOverPace(for: limit, now: now)
-            if curOverPace && !prev.overPace {
+            if curOverPace && (didReset || !prev.overPaceLatched) {
                 fired.insert(.overWeeklyPace)
             }
         }
