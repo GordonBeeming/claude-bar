@@ -65,6 +65,12 @@ struct CelebrationEventTests {
         #expect(detectCelebrationEvents(previous: previous, current: [weekly], now: fixedNow) == [.weeklyReset])
     }
 
+    @Test func weeklyResetCanAlsoFireOverPace() {
+        let weekly = limit(id: "weekly_all", group: "weekly", percent: 9, resetsAt: fixedNow.addingTimeInterval(7 * 86400))
+        let previous = [celebKey("weekly_all"): LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(7 * 86400), percent: 95, overPaceLatched: true)]
+        #expect(detectCelebrationEvents(previous: previous, current: [weekly], now: fixedNow) == [.weeklyReset, .overWeeklyPace])
+    }
+
     @Test func simultaneousWeeklyResetsDedupeToOne() {
         // The all-models weekly and a model-scoped weekly reset together → one trigger. They
         // have distinct celebration keys, so neither is treated as ambiguous.
@@ -119,12 +125,13 @@ struct CelebrationEventTests {
         )
 
         let first = LimitSnapshot.next(after: nil, for: weekly, now: fixedNow)
+        let nearBoundaryTime = fixedNow.addingTimeInterval(duration * 0.105) // 0.5 points under pace.
         let nearBoundary = LimitSnapshot.next(
             after: first,
             for: weekly,
-            now: fixedNow.addingTimeInterval(duration * 0.105)
+            now: nearBoundaryTime
         )
-        let clearlyUnderTime = fixedNow.addingTimeInterval(duration * 0.12)
+        let clearlyUnderTime = fixedNow.addingTimeInterval(duration * 0.12) // 2 points under pace.
         let clearlyUnder = LimitSnapshot.next(
             after: nearBoundary,
             for: weekly,

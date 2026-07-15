@@ -148,7 +148,7 @@ final class UsageViewModel {
         let snapshots = Dictionary(
             limits.map { limit in
                 (limit.celebrationKey, LimitSnapshot.next(
-                    after: hasSeededCelebrations ? previousSnapshots[limit.celebrationKey] : nil,
+                    after: previousSnapshots[limit.celebrationKey],
                     for: limit,
                     now: now
                 ))

@@ -57,7 +57,7 @@ public enum CelebrationTrigger: String, CaseIterable, Sendable {
 /// What a limit looked like on the previous poll, enough to detect the transitions
 /// that fire a celebration without re-deriving them from the raw limit each time.
 public struct LimitSnapshot: Sendable {
-    private static let rearmBufferPercent = 1.0
+    private static let rearmBufferPercentagePoints = 1.0
 
     public let resetsAt: Date?
     public let percent: Double
@@ -74,16 +74,16 @@ public struct LimitSnapshot: Sendable {
             $0.percent - limit.percent > resetDropThreshold && limit.percent < resetFloor
         } ?? false
         let isOverPace = UsageWindow.isOverPace(for: limit, now: now)
-        let isClearlyUnderPace = !UsageWindow.isOverPace(
+        let isWithinRearmBuffer = UsageWindow.isOverPace(
             for: limit,
             now: now,
-            marginPercent: -rearmBufferPercent
+            marginPercent: -rearmBufferPercentagePoints
         )
         return Self(
             resetsAt: limit.resetsAt,
             percent: limit.percent,
             overPaceLatched: isOverPace
-                || (!didReset && !isClearlyUnderPace && previous?.overPaceLatched == true)
+                || (!didReset && isWithinRearmBuffer && previous?.overPaceLatched == true)
         )
     }
 }
