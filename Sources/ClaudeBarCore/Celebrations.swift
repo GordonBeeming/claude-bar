@@ -91,8 +91,8 @@ public struct LimitSnapshot: Sendable {
 /// How far usage must fall between polls to count as a reset, and the level it must land
 /// under. `resetsAt` jumps proved too noisy to key on (phantom weekly fireworks, hourly
 /// phantom session confetti), so detection keys on the drop in usage instead.
-public let resetDropThreshold = 25.0
-public let resetFloor = 10.0
+let resetDropThreshold = 25.0
+let resetFloor = 10.0
 
 /// Shared reset rule for event detection, latch updates, and diagnostics.
 public func usageDidReset(from previous: Double, to current: Double) -> Bool {
