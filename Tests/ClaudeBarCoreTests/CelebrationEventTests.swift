@@ -29,10 +29,9 @@ struct CelebrationEventTests {
         #expect(events.isEmpty)
     }
 
-    @Test func sessionResetFiresOnUsageDrop() {
-        // Usage fell 88% → 1%: a fresh allowance.
-        let session = limit(id: "session", group: "session", percent: 1, resetsAt: fixedNow.addingTimeInterval(5 * 3600))
-        let previous = [celebKey("session"): LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(-3600), percent: 88, overPaceLatched: false)]
+    @Test func sessionResetFiresWhenLowUsageReturnsToZero() {
+        let session = limit(id: "session", group: "session", percent: 0, resetsAt: fixedNow.addingTimeInterval(5 * 3600))
+        let previous = [celebKey("session"): LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(-3600), percent: 20, overPaceLatched: false)]
         #expect(detectCelebrationEvents(previous: previous, current: [session], now: fixedNow) == [.sessionReset])
     }
 
@@ -59,9 +58,9 @@ struct CelebrationEventTests {
         #expect(detectCelebrationEvents(previous: previous, current: [weekly], now: fixedNow).isEmpty)
     }
 
-    @Test func weeklyResetFiresOnUsageDrop() {
-        let weekly = limit(id: "weekly_all", group: "weekly", percent: 1, resetsAt: fixedNow.addingTimeInterval(7 * 86400))
-        let previous = [celebKey("weekly_all"): LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(7 * 86400), percent: 95, overPaceLatched: true)]
+    @Test func weeklyResetFiresWhenLowUsageReturnsToZero() {
+        let weekly = limit(id: "weekly_all", group: "weekly", percent: 0, resetsAt: fixedNow.addingTimeInterval(7 * 86400))
+        let previous = [celebKey("weekly_all"): LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(7 * 86400), percent: 20, overPaceLatched: true)]
         #expect(detectCelebrationEvents(previous: previous, current: [weekly], now: fixedNow) == [.weeklyReset])
     }
 
