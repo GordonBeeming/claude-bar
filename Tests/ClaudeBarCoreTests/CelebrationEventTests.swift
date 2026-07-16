@@ -36,6 +36,12 @@ struct CelebrationEventTests {
         #expect(detectCelebrationEvents(previous: previous, current: [session], now: fixedNow) == [.sessionReset])
     }
 
+    @Test func sessionResetFiresWhenLowUsageReturnsToZero() {
+        let session = limit(id: "session", group: "session", percent: 0, resetsAt: fixedNow.addingTimeInterval(5 * 3600))
+        let previous = [celebKey("session"): LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(-3600), percent: 20, overPaceLatched: false)]
+        #expect(detectCelebrationEvents(previous: previous, current: [session], now: fixedNow) == [.sessionReset])
+    }
+
     @Test func usageClimbIsNotAReset() {
         // Usage rising within a window is the normal case — never a reset.
         let reset = fixedNow.addingTimeInterval(2 * 3600)
@@ -62,6 +68,12 @@ struct CelebrationEventTests {
     @Test func weeklyResetFiresOnUsageDrop() {
         let weekly = limit(id: "weekly_all", group: "weekly", percent: 1, resetsAt: fixedNow.addingTimeInterval(7 * 86400))
         let previous = [celebKey("weekly_all"): LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(7 * 86400), percent: 95, overPaceLatched: true)]
+        #expect(detectCelebrationEvents(previous: previous, current: [weekly], now: fixedNow) == [.weeklyReset])
+    }
+
+    @Test func weeklyResetFiresWhenLowUsageReturnsToZero() {
+        let weekly = limit(id: "weekly_all", group: "weekly", percent: 0, resetsAt: fixedNow.addingTimeInterval(7 * 86400))
+        let previous = [celebKey("weekly_all"): LimitSnapshot(resetsAt: fixedNow.addingTimeInterval(7 * 86400), percent: 20, overPaceLatched: true)]
         #expect(detectCelebrationEvents(previous: previous, current: [weekly], now: fixedNow) == [.weeklyReset])
     }
 

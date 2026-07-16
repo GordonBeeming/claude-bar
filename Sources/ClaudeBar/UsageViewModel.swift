@@ -177,9 +177,8 @@ final class UsageViewModel {
         for limit in limits where UsageWindow.duration(forGroup: limit.group) != nil {
             guard let prev = previousSnapshots[limit.celebrationKey] else { continue }
             let drop = prev.percent - limit.percent
-            guard drop > diagnosticDropFloor else { continue }
-            // Reuse the detector's own thresholds so the log can't drift from what fires.
-            let countedAsReset = drop > resetDropThreshold && limit.percent < resetFloor
+            let countedAsReset = usageDidReset(from: prev.percent, to: limit.percent)
+            guard countedAsReset || drop > diagnosticDropFloor else { continue }
             logger.notice("""
                 usage dropped \(drop, privacy: .public) points for \
                 \(limit.id, privacy: .public) — \(prev.percent, privacy: .public)% → \

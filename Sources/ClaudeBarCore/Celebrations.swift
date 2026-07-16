@@ -71,7 +71,7 @@ public struct LimitSnapshot: Sendable {
 
     public static func next(after previous: Self?, for limit: UsageLimit, now: Date) -> Self {
         let didReset = previous.map {
-            $0.percent - limit.percent > resetDropThreshold && limit.percent < resetFloor
+            usageDidReset(from: $0.percent, to: limit.percent)
         } ?? false
         let isOverPace = UsageWindow.isOverPace(for: limit, now: now)
         let isWithinRearmBuffer = UsageWindow.isOverPace(
@@ -88,12 +88,17 @@ public struct LimitSnapshot: Sendable {
     }
 }
 
-/// How far usage must fall between polls to count as a reset, and the level it must land
+/// For non-zero resets, how far usage must fall between polls and the level it must land
 /// under. `resetsAt` jumps proved too noisy to key on (phantom weekly fireworks, hourly
-/// phantom session confetti), so detection keys on the drop in usage instead. Public so the
-/// diagnostic logging can reuse the same numbers instead of duplicating them.
-public let resetDropThreshold = 25.0
-public let resetFloor = 10.0
+/// phantom session confetti), so detection keys on the drop in usage instead.
+private let resetDropThreshold = 25.0
+private let resetFloor = 10.0
+
+/// Shared reset rule for event detection, latch updates, and diagnostics.
+public func usageDidReset(from previous: Double, to current: Double) -> Bool {
+    (previous > 0 && current == 0)
+        || (previous - current > resetDropThreshold && current < resetFloor)
+}
 
 /// Pure diff of the previous poll against the current one → the set of triggers that
 /// just fired. A limit with no `previous` snapshot (first-seen, or the very first poll
@@ -121,11 +126,12 @@ public func detectCelebrationEvents(
         // A reset is a fresh allowance, and usage only ever climbs within a window — so a
         // sharp drop is the unambiguous signal that the window rolled, including the
         // ad-hoc server-side resets Anthropic sometimes does that a `resetsAt` jump can
-        // miss. Require both the drop to clear `resetDropThreshold` and the new level to
-        // sit under `resetFloor`, so a mid-range dip can't trip it. `resetsAt` is left out
+        // miss. A return to exactly zero is unambiguous — otherwise require both the drop to
+        // clear `resetDropThreshold` and the new level to sit under `resetFloor`, so a
+        // mid-range dip can't trip it. `resetsAt` is left out
         // of reset detection entirely (it stays only for pace) because its jumps are noisy
         // — a transient API value or a scoped-limit `id` collision fired phantom resets.
-        let didReset = prev.percent - limit.percent > resetDropThreshold && limit.percent < resetFloor
+        let didReset = usageDidReset(from: prev.percent, to: limit.percent)
         if didReset {
             switch limit.group {
             case "session": fired.insert(.sessionReset)
