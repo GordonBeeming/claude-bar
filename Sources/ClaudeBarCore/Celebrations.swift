@@ -88,11 +88,11 @@ public struct LimitSnapshot: Sendable {
     }
 }
 
-/// How far usage must fall between polls to count as a reset, and the level it must land
+/// For non-zero resets, how far usage must fall between polls and the level it must land
 /// under. `resetsAt` jumps proved too noisy to key on (phantom weekly fireworks, hourly
 /// phantom session confetti), so detection keys on the drop in usage instead.
-let resetDropThreshold = 25.0
-let resetFloor = 10.0
+private let resetDropThreshold = 25.0
+private let resetFloor = 10.0
 
 /// Shared reset rule for event detection, latch updates, and diagnostics.
 public func usageDidReset(from previous: Double, to current: Double) -> Bool {
@@ -126,7 +126,7 @@ public func detectCelebrationEvents(
         // A reset is a fresh allowance, and usage only ever climbs within a window — so a
         // sharp drop is the unambiguous signal that the window rolled, including the
         // ad-hoc server-side resets Anthropic sometimes does that a `resetsAt` jump can
-        // miss. A return to exactly zero is unambiguous; otherwise require both the drop to
+        // miss. A return to exactly zero is unambiguous — otherwise require both the drop to
         // clear `resetDropThreshold` and the new level to sit under `resetFloor`, so a
         // mid-range dip can't trip it. `resetsAt` is left out
         // of reset detection entirely (it stays only for pace) because its jumps are noisy
