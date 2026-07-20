@@ -76,4 +76,4 @@ Run any hand-written notes through the `humanizer:humanizer` skill (Skill tool) 
 - Always bump the minor version; never use a `.0` patch in tags (v0.3, not v0.3.0).
 - Don't use `--draft` — a draft doesn't fire `release: published`, so CI won't build.
 - The release triggers the full CI pipeline (notarization takes a few minutes) — wait for it to go green before telling anyone to `brew upgrade`.
-- The release event re-runs `build-and-test` (it's not skipped just because the branch already built on every push), and the signing job only starts once that passes — check both jobs' logs with `gh run view --log-failed`. A failure in signing specifically usually means an expired notarization app-password / Developer ID cert in the `prod` environment, or a bad tag.
+- The release event re-runs `build-and-test` (it's not skipped just because the branch already built on every push), and the signing job only starts once that passes — check both jobs' logs with `gh run view --log-failed --repo gordonbeeming/claude-bar`. A failure in signing specifically usually means an expired notarization app-password / Developer ID cert in the `prod` environment, or a bad tag.
