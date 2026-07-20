@@ -56,7 +56,7 @@ Publish it (no `--draft`) — the pipeline runs on `release: published`.
 
 ## Version Format
 
-- Tags: `v{major}.{minor}` (e.g. `v0.3`) — NO patch number; the workflow guard rejects any tag whose (optionally `v`-prefixed) remainder isn't `major.minor`.
+- Tags: `v{major}.{minor}` (e.g. `v0.3`) — NO patch number, and always include the `v` prefix: the release DMG asset name and the Homebrew cask URL both assume it. The workflow guard only checks that the tag matches `major.minor` after stripping a leading `v`, if any — it won't catch a missing `v` prefix on its own.
 - CI sets `CFBundleShortVersionString` to `{major}.{minor}` and `CFBundleVersion` to `{major}.{minor}.{runNumber}` — a single combined dotted string (`make bundle` sets `CFBundleVersion` to `$(VERSION).$(BUILD)`).
 - The tag `v0.3` with run number 45 sets `CFBundleShortVersionString=0.3` and `CFBundleVersion=0.3.45`.
 
