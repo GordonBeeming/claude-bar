@@ -56,9 +56,9 @@ Publish it (no `--draft`) — the pipeline runs on `release: published`.
 
 ## Version Format
 
-- Tags: `v{major}.{minor}` (e.g. `v0.3`) — NO patch number; the workflow guard rejects anything else.
-- Bundle version: `{major}.{minor}.{runNumber}` — CI adds the run number as the patch component.
-- The tag `v0.3` with run number 45 produces bundle version `0.3.45`.
+- Tags: `v{major}.{minor}` (e.g. `v0.3`) — NO patch number; the workflow guard rejects any tag whose (optionally `v`-prefixed) remainder isn't `major.minor`.
+- CI sets `CFBundleShortVersionString` to `{major}.{minor}` and `CFBundleVersion` to the run number separately — they're not combined into a single dotted bundle version.
+- The tag `v0.3` with run number 45 sets `CFBundleShortVersionString=0.3` and `CFBundleVersion=45`.
 
 ## Generating Release Notes
 
@@ -75,4 +75,4 @@ Run any hand-written notes through the humanizer pass before publishing.
 - Always bump the minor version; never use a `.0` patch in tags (v0.3, not v0.3.0).
 - Don't use `--draft` — a draft doesn't fire `release: published`, so CI won't build.
 - The release triggers the full CI pipeline (notarization takes a few minutes) — wait for it to go green before telling anyone to `brew upgrade`.
-- A red release job is almost always the sign/notarize/upload stage, not a compile error (the build job already ran on every push). Check `gh run view --log-failed`; usual causes are an expired notarization app-password / Developer ID cert in the `prod` environment, or a bad tag.
+- The release event re-runs `build-and-test` (it's not skipped just because the branch already built on every push), and the signing job only starts once that passes — check both jobs' logs with `gh run view --log-failed`. A failure in signing specifically usually means an expired notarization app-password / Developer ID cert in the `prod` environment, or a bad tag.
