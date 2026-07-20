@@ -57,8 +57,8 @@ Publish it (no `--draft`) — the pipeline runs on `release: published`.
 ## Version Format
 
 - Tags: `v{major}.{minor}` (e.g. `v0.3`) — NO patch number; the workflow guard rejects any tag whose (optionally `v`-prefixed) remainder isn't `major.minor`.
-- CI sets `CFBundleShortVersionString` to `{major}.{minor}` and `CFBundleVersion` to the run number separately — they're not combined into a single dotted bundle version.
-- The tag `v0.3` with run number 45 sets `CFBundleShortVersionString=0.3` and `CFBundleVersion=45`.
+- CI sets `CFBundleShortVersionString` to `{major}.{minor}` and `CFBundleVersion` to `{major}.{minor}.{runNumber}` — a single combined dotted string (`make bundle` sets `CFBundleVersion` to `$(VERSION).$(BUILD)`).
+- The tag `v0.3` with run number 45 sets `CFBundleShortVersionString=0.3` and `CFBundleVersion=0.3.45`.
 
 ## Generating Release Notes
 
