@@ -20,29 +20,31 @@ Create a new GitHub release for ClaudeBar. Publishing the release triggers the C
    ```
 4. Bump the minor version (e.g. v0.2 → v0.3). Never use a patch number in the tag.
 5. Create the release:
-   ```bash
-   gh release create v{major}.{minor} \
-     --repo gordonbeeming/claude-bar \
-     --target main \
-     --title "ClaudeBar v{major}.{minor} — {short description}" \
-     --notes "$(cat <<'EOF'
-   # ClaudeBar v{major}.{minor} — {short description}
 
-   ## What's New
+````bash
+gh release create v{major}.{minor} \
+  --repo gordonbeeming/claude-bar \
+  --target main \
+  --title "ClaudeBar v{major}.{minor} — {short description}" \
+  --notes "$(cat <<'EOF'
+# ClaudeBar v{major}.{minor} — {short description}
 
-   - {list changes since last release using git log}
+## What's New
 
-   ## Install
+- {list changes since last release using git log}
 
-   ```bash
-   brew upgrade --cask gordonbeeming/tap/claude-bar
-   ```
+## Install
 
-   Or download the DMG from the assets below.
-   EOF
-   )"
-   ```
-   Publish it (no `--draft`) — the pipeline runs on `release: published`.
+```bash
+brew upgrade --cask gordonbeeming/tap/claude-bar
+```
+
+Or download the DMG from the assets below.
+EOF
+)"
+````
+
+Publish it (no `--draft`) — the pipeline runs on `release: published`.
 6. The release pipeline (`.github/workflows/build.yml`) automatically:
    - Build + test
    - Sign with Developer ID
