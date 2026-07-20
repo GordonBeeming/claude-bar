@@ -52,7 +52,7 @@ Publish it (no `--draft`) — the pipeline runs on `release: published`.
    - Create + sign the DMG
    - Upload the DMG asset to the release
    - Update the Homebrew tap cask (`GordonBeeming/homebrew-tap/Casks/claude-bar.rb`)
-7. Watch it finish, then report the release URL + run: `gh run watch`
+7. Watch it finish, then report the release URL + run: `gh run watch --repo gordonbeeming/claude-bar`
 
 ## Version Format
 
@@ -64,10 +64,11 @@ Publish it (no `--draft`) — the pipeline runs on `release: published`.
 
 ```bash
 LAST_TAG=$(gh release list --repo gordonbeeming/claude-bar --limit 1 --json tagName --jq '.[0].tagName')
-git log ${LAST_TAG}..HEAD --oneline
+git fetch origin main
+git log ${LAST_TAG}..origin/main --oneline
 ```
 
-Run any hand-written notes through the humanizer pass before publishing.
+Run any hand-written notes through the `humanizer:humanizer` skill (Skill tool) before publishing — it strips AI-writing patterns from release-note prose.
 
 ## Important
 
