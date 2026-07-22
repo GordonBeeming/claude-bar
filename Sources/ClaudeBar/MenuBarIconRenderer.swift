@@ -132,10 +132,13 @@ struct MenuBarLabelView: View {
     let celebrations: CelebrationController
 
     var body: some View {
-        let highest = model.highest
+        let displayedLimit = menuBarLimit(
+            in: model.limits,
+            selectedKey: settings.menuBarPercentageSelection.limitSelectionKey
+        )
         Image(nsImage: MenuBarIconRenderer.image(
-            percent: highest.map { Int($0.percent.rounded()) },
-            severity: highest.map { settings.thresholds.resolve(for: $0) } ?? .normal,
+            percent: displayedLimit.map { Int($0.percent.rounded()) },
+            severity: displayedLimit.map { settings.thresholds.resolve(for: $0) } ?? .normal,
             flameColor: flameColor
         ))
         .onAppear {
