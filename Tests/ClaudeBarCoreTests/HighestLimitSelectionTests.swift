@@ -63,4 +63,22 @@ struct HighestLimitSelectionTests {
         #expect(sonnet.selectionKey != opus.selectionKey)
         #expect(menuBarLimit(in: [sonnet, opus], selectedKey: sonnet.selectionKey)?.percent == 10)
     }
+
+    @Test func menuBarSelectionKeySurvivesScopedModelDisplayNameChanges() {
+        let selected = UsageLimit(
+            kind: "weekly_scoped",
+            percent: 10,
+            severity: .normal,
+            scope: LimitScope(model: .init(id: "sonnet", displayName: "Sonnet"))
+        )
+        let refreshed = UsageLimit(
+            kind: "weekly_scoped",
+            percent: 25,
+            severity: .normal,
+            scope: LimitScope(model: .init(id: "sonnet", displayName: "Sonnet 4"))
+        )
+
+        #expect(selected.selectionKey == refreshed.selectionKey)
+        #expect(menuBarLimit(in: [refreshed], selectedKey: selected.selectionKey)?.percent == 25)
+    }
 }
