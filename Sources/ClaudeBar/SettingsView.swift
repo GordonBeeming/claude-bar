@@ -58,7 +58,7 @@ struct SettingsView: View {
             Section("Menu bar") {
                 Picker("Percentage", selection: menuBarPercentageSelection) {
                     Text("Highest").tag(MenuBarPercentageSelection.highest)
-                    ForEach(model.limits) { limit in
+                    ForEach(model.limits, id: \.selectionKey) { limit in
                         Text(LimitPresentation.displayName(for: limit))
                             .tag(MenuBarPercentageSelection.limit(limit.selectionKey))
                     }
