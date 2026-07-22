@@ -134,7 +134,7 @@ struct MenuBarLabelView: View {
     var body: some View {
         let displayedLimit = menuBarLimit(
             in: model.limits,
-            selectedID: settings.menuBarPercentageSelection.limitID
+            selectedKey: settings.menuBarPercentageSelection.limitSelectionKey
         )
         Image(nsImage: MenuBarIconRenderer.image(
             percent: displayedLimit.map { Int($0.percent.rounded()) },

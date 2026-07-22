@@ -22,30 +22,38 @@ enum MenuBarPercentageSelection: Hashable {
     case limit(String)
 
     private static let highestRawValue = "highest"
+    private static let limitRawValuePrefix = "limit:"
 
     init(rawValue: String?) {
-        guard let rawValue, rawValue != Self.highestRawValue else {
+        guard let rawValue else {
             self = .highest
             return
         }
-        self = .limit(rawValue)
+
+        if rawValue == Self.highestRawValue {
+            self = .highest
+        } else if rawValue.hasPrefix(Self.limitRawValuePrefix) {
+            self = .limit(String(rawValue.dropFirst(Self.limitRawValuePrefix.count)))
+        } else {
+            self = .limit(rawValue)
+        }
     }
 
     var rawValue: String {
         switch self {
         case .highest:
             Self.highestRawValue
-        case let .limit(id):
-            id
+        case let .limit(key):
+            Self.limitRawValuePrefix + key
         }
     }
 
-    var limitID: String? {
+    var limitSelectionKey: String? {
         switch self {
         case .highest:
             nil
-        case let .limit(id):
-            id
+        case let .limit(key):
+            key
         }
     }
 }

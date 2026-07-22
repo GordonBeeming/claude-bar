@@ -35,6 +35,10 @@ public struct UsageLimit: Decodable, Sendable, Identifiable {
         [kind, scope?.model?.id ?? "", scope?.model?.displayName ?? ""].joined(separator: "\u{1}")
     }
 
+    public var selectionKey: String {
+        celebrationKey
+    }
+
     public init(
         kind: String,
         group: String? = nil,
@@ -155,7 +159,7 @@ public func highestLimit(in limits: [UsageLimit]) -> UsageLimit? {
     }
 }
 
-public func menuBarLimit(in limits: [UsageLimit], selectedID: String?) -> UsageLimit? {
-    guard let selectedID else { return highestLimit(in: limits) }
-    return limits.first { $0.id == selectedID } ?? highestLimit(in: limits)
+public func menuBarLimit(in limits: [UsageLimit], selectedKey: String?) -> UsageLimit? {
+    guard let selectedKey else { return highestLimit(in: limits) }
+    return limits.first { $0.selectionKey == selectedKey } ?? highestLimit(in: limits)
 }

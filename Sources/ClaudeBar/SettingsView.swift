@@ -60,7 +60,7 @@ struct SettingsView: View {
                     Text("Highest").tag(MenuBarPercentageSelection.highest)
                     ForEach(model.limits) { limit in
                         Text(LimitPresentation.displayName(for: limit))
-                            .tag(MenuBarPercentageSelection.limit(limit.id))
+                            .tag(MenuBarPercentageSelection.limit(limit.selectionKey))
                     }
                 }
 
@@ -103,12 +103,12 @@ struct SettingsView: View {
         Binding(
             get: {
                 guard
-                    let selectedID = settings.menuBarPercentageSelection.limitID,
-                    model.limits.contains(where: { $0.id == selectedID })
+                    let selectedKey = settings.menuBarPercentageSelection.limitSelectionKey,
+                    model.limits.contains(where: { $0.selectionKey == selectedKey })
                 else {
                     return .highest
                 }
-                return .limit(selectedID)
+                return .limit(selectedKey)
             },
             set: { settings.menuBarPercentageSelection = $0 }
         )
