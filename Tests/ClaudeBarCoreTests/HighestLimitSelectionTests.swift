@@ -23,4 +23,25 @@ struct HighestLimitSelectionTests {
     @Test func emptyListReturnsNil() {
         #expect(highestLimit(in: []) == nil)
     }
+
+    @Test func menuBarDefaultsToHighestLimit() {
+        let session = UsageLimit(kind: "session", percent: 11, severity: .normal)
+        let weekly = UsageLimit(kind: "weekly_all", percent: 89, severity: .warning)
+
+        #expect(menuBarLimit(in: [session, weekly], selectedID: nil)?.kind == "weekly_all")
+    }
+
+    @Test func menuBarUsesSelectedLimit() {
+        let session = UsageLimit(kind: "session", percent: 11, severity: .normal)
+        let weekly = UsageLimit(kind: "weekly_all", percent: 89, severity: .warning)
+
+        #expect(menuBarLimit(in: [session, weekly], selectedID: session.id)?.kind == "session")
+    }
+
+    @Test func menuBarFallsBackToHighestWhenSelectionIsMissing() {
+        let session = UsageLimit(kind: "session", percent: 11, severity: .normal)
+        let weekly = UsageLimit(kind: "weekly_all", percent: 89, severity: .warning)
+
+        #expect(menuBarLimit(in: [session, weekly], selectedID: "monthly_all")?.kind == "weekly_all")
+    }
 }

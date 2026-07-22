@@ -17,6 +17,39 @@ enum CredentialSource: String, CaseIterable, Sendable {
     }
 }
 
+enum MenuBarPercentageSelection: Hashable {
+    case highest
+    case limit(String)
+
+    private static let highestRawValue = "highest"
+
+    init(rawValue: String?) {
+        guard let rawValue, rawValue != Self.highestRawValue else {
+            self = .highest
+            return
+        }
+        self = .limit(rawValue)
+    }
+
+    var rawValue: String {
+        switch self {
+        case .highest:
+            Self.highestRawValue
+        case let .limit(id):
+            id
+        }
+    }
+
+    var limitID: String? {
+        switch self {
+        case .highest:
+            nil
+        case let .limit(id):
+            id
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AppSettings {
@@ -24,6 +57,7 @@ final class AppSettings {
         static let useClaudeSeverity = "useClaudeSeverity"
         static let warningThresholdPercent = "warningThresholdPercent"
         static let criticalThresholdPercent = "criticalThresholdPercent"
+        static let menuBarPercentageSelection = "menuBarPercentageSelection"
         static let showMenuBarFlame = "showMenuBarFlame"
         static let celebrationsEnabled = "celebrationsEnabled"
         static let credentialSource = "credentialSource"
@@ -45,6 +79,12 @@ final class AppSettings {
     /// Whether the menu-bar icon shows the 🔥 flame when a limit is burning over pace.
     var showMenuBarFlame: Bool {
         didSet { defaults.set(showMenuBarFlame, forKey: Keys.showMenuBarFlame) }
+    }
+
+    var menuBarPercentageSelection: MenuBarPercentageSelection {
+        didSet {
+            defaults.set(menuBarPercentageSelection.rawValue, forKey: Keys.menuBarPercentageSelection)
+        }
     }
 
     /// Master switch — off by default. The per-trigger toggles and effect choices below
@@ -121,6 +161,7 @@ final class AppSettings {
             Keys.useClaudeSeverity: true,
             Keys.warningThresholdPercent: 75.0,
             Keys.criticalThresholdPercent: 90.0,
+            Keys.menuBarPercentageSelection: MenuBarPercentageSelection.highest.rawValue,
             Keys.showMenuBarFlame: true,
             Keys.celebrationsEnabled: false,
             Keys.credentialSource: CredentialSource.claudeCode.rawValue
@@ -134,6 +175,9 @@ final class AppSettings {
         UserDefaults.standard.register(defaults: registrations)
 
         useClaudeSeverity = defaults.bool(forKey: Keys.useClaudeSeverity)
+        menuBarPercentageSelection = MenuBarPercentageSelection(
+            rawValue: defaults.string(forKey: Keys.menuBarPercentageSelection)
+        )
         showMenuBarFlame = defaults.bool(forKey: Keys.showMenuBarFlame)
         celebrationsEnabled = defaults.bool(forKey: Keys.celebrationsEnabled)
         credentialSource = defaults.string(forKey: Keys.credentialSource)

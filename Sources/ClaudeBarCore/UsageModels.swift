@@ -154,3 +154,8 @@ public func highestLimit(in limits: [UsageLimit]) -> UsageLimit? {
         return lhs.severity < rhs.severity
     }
 }
+
+public func menuBarLimit(in limits: [UsageLimit], selectedID: String?) -> UsageLimit? {
+    guard let selectedID else { return highestLimit(in: limits) }
+    return limits.first { $0.id == selectedID } ?? highestLimit(in: limits)
+}

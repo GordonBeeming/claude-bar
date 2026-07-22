@@ -42,10 +42,6 @@ final class UsageViewModel {
     private static let didApplyDefaultLaunchAtLoginKey = "didApplyDefaultLaunchAtLogin"
     private static let staleThreshold: TimeInterval = 30
 
-    var highest: UsageLimit? {
-        highestLimit(in: limits)
-    }
-
     /// `SMAppService.mainApp.register()` throws outside a real `.app` bundle, so the
     /// toggle disables itself under a bare `swift run` binary instead of crashing.
     var launchAtLoginAvailable: Bool {
