@@ -94,7 +94,12 @@ struct UsageMenuView: View {
                 if index > 0 {
                     Divider()
                 }
-                LimitRowView(limit: limit, now: now, severity: settings.thresholds.resolve(for: limit))
+                LimitRowView(
+                    limit: limit,
+                    now: now,
+                    severity: settings.thresholds.resolve(for: limit),
+                    displayMode: settings.usageDisplayMode
+                )
             }
         }
     }

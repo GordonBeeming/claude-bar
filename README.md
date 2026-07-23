@@ -52,6 +52,7 @@ open ~/Applications/ClaudeBar.app
 Open **Settings…** from the dropdown:
 
 - **Usage colours** — by default the icon turns orange/red when Claude's API says a limit is at warning/critical. Untick *Use Claude's severity levels* and you get a blue → orange → red bar: drag the two splitters to pick your own warning and critical percentages.
+- **⛽ Fuel tank mode** — flip every percentage and progress bar from *used* to *remaining*. Instead of a limit filling up from 0 → 100% as you burn through it, it starts full and drains toward empty, like a fuel gauge. It's purely cosmetic: colours, the 🔥 over-pace flame, and the steady-pace marker all still track real usage, so a nearly-empty tank still turns red.
 - **Launch at login** — on by default, toggle it here.
 
 ## How it works

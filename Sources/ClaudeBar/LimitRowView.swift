@@ -5,6 +5,7 @@ struct LimitRowView: View {
     let limit: UsageLimit
     let now: Date
     let severity: Severity
+    var displayMode: UsageDisplayMode = .used
 
     private let barHeight: CGFloat = 8
     private let markerWidth: CGFloat = 2
@@ -15,7 +16,7 @@ struct LimitRowView: View {
                 Text(LimitPresentation.displayName(for: limit))
                     .font(.subheadline)
                 Spacer()
-                Text("\(Int(limit.percent.rounded()))%")
+                Text("\(displayedPercent)%")
                     .font(.subheadline.bold())
             }
 
@@ -55,17 +56,17 @@ struct LimitRowView: View {
 
                     Rectangle()
                         .fill(tintColor)
-                        .frame(width: width * clampedPercent / 100)
+                        .frame(width: width * fillFraction)
                 }
                 .clipShape(Capsule())
 
                 // The marker sits outside the capsule clip so the rounded corners don't
                 // trim it when the pace lands near either edge of the track.
-                if let paceFraction {
+                if let markerFraction, let paceFraction {
                     Rectangle()
                         .fill(Color.primary.opacity(0.6))
                         .frame(width: markerWidth)
-                        .offset(x: markerOffset(paceFraction: paceFraction, width: width))
+                        .offset(x: markerOffset(fraction: markerFraction, width: width))
                         .accessibilityLabel("Steady pace")
                         .accessibilityValue("\(Int((paceFraction * 100).rounded())) percent of the window elapsed")
                 }
@@ -76,18 +77,25 @@ struct LimitRowView: View {
         .accessibilityValue(barAccessibilityValue)
     }
 
-    private func markerOffset(paceFraction: Double, width: CGFloat) -> CGFloat {
+    private func markerOffset(fraction: Double, width: CGFloat) -> CGFloat {
         // Clamp so the marker never renders half off the track at either edge. Floor the
         // upper bound at 0: a transient layout pass with width < markerWidth would
         // otherwise make `width - markerWidth` negative and push the marker off-track.
         let maxOffset = max(width - markerWidth, 0)
-        return min(max(width * paceFraction - markerWidth / 2, 0), maxOffset)
+        return min(max(width * fraction - markerWidth / 2, 0), maxOffset)
     }
 
     private var barAccessibilityValue: String {
-        let base = "\(Int(limit.percent.rounded())) percent"
+        let base = displayMode == .fuelTank
+            ? "\(displayedPercent) percent remaining"
+            : "\(displayedPercent) percent"
         guard isOverPace else { return base }
         return base + ", ahead of pace by \(aheadOfPacePercent) percent"
+    }
+
+    /// The whole number shown in the row, flipped to fuel remaining in fuel-tank mode.
+    private var displayedPercent: Int {
+        Int(displayMode.displayPercent(usedPercent: limit.percent).rounded())
     }
 
     // Only meaningful when over pace; guard so a stray read when on/under pace can't
@@ -98,12 +106,20 @@ struct LimitRowView: View {
         return max(1, Int(paceDelta.rounded()))
     }
 
-    private var clampedPercent: Double {
-        min(max(limit.percent, 0), 100)
+    /// Fraction of the track to fill: used fraction normally, remaining fraction in
+    /// fuel-tank mode so the bar drains as usage climbs.
+    private var fillFraction: Double {
+        displayMode.fillFraction(usedPercent: limit.percent)
     }
 
     private var paceFraction: Double? {
         UsageWindow.paceFraction(for: limit, now: now)
+    }
+
+    /// Where the steady-pace marker sits, mirrored in fuel-tank mode so "over pace" still
+    /// reads as the fill falling short of the marker.
+    private var markerFraction: Double? {
+        paceFraction.map { displayMode.markerFraction(paceFraction: $0) }
     }
 
     private var paceDelta: Double {
