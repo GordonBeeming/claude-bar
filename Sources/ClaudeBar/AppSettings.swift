@@ -66,6 +66,7 @@ final class AppSettings {
         static let warningThresholdPercent = "warningThresholdPercent"
         static let criticalThresholdPercent = "criticalThresholdPercent"
         static let menuBarPercentageSelection = "menuBarPercentageSelection"
+        static let fuelTankMode = "fuelTankMode"
         static let showMenuBarFlame = "showMenuBarFlame"
         static let celebrationsEnabled = "celebrationsEnabled"
         static let credentialSource = "credentialSource"
@@ -87,6 +88,17 @@ final class AppSettings {
     /// Whether the menu-bar icon shows the 🔥 flame when a limit is burning over pace.
     var showMenuBarFlame: Bool {
         didSet { defaults.set(showMenuBarFlame, forKey: Keys.showMenuBarFlame) }
+    }
+
+    /// Off by default (percentages count up as usage). On flips every percentage and
+    /// progress bar into "fuel remaining" that drains from full to empty.
+    var fuelTankMode: Bool {
+        didSet { defaults.set(fuelTankMode, forKey: Keys.fuelTankMode) }
+    }
+
+    /// The display direction the rest of the app renders with, derived from `fuelTankMode`.
+    var usageDisplayMode: UsageDisplayMode {
+        fuelTankMode ? .fuelTank : .used
     }
 
     var menuBarPercentageSelection: MenuBarPercentageSelection {
@@ -170,6 +182,7 @@ final class AppSettings {
             Keys.warningThresholdPercent: 75.0,
             Keys.criticalThresholdPercent: 90.0,
             Keys.menuBarPercentageSelection: MenuBarPercentageSelection.highest.rawValue,
+            Keys.fuelTankMode: false,
             Keys.showMenuBarFlame: true,
             Keys.celebrationsEnabled: false,
             Keys.credentialSource: CredentialSource.claudeCode.rawValue
@@ -186,6 +199,7 @@ final class AppSettings {
         menuBarPercentageSelection = MenuBarPercentageSelection(
             rawValue: defaults.string(forKey: Keys.menuBarPercentageSelection)
         )
+        fuelTankMode = defaults.bool(forKey: Keys.fuelTankMode)
         showMenuBarFlame = defaults.bool(forKey: Keys.showMenuBarFlame)
         celebrationsEnabled = defaults.bool(forKey: Keys.celebrationsEnabled)
         credentialSource = defaults.string(forKey: Keys.credentialSource)
