@@ -41,6 +41,24 @@ struct ResetFormattingTests {
         #expect(result.contains("4:20"))
     }
 
+    // Reproduces the flicker seen against the live API: the server's resets_at
+    // wobbles by under a second between polls, and when the true instant sits near a
+    // minute boundary that wobble can land on either side of it. Both sides must
+    // still render the same minute.
+    @Test func subSecondJitterBeforeMinuteBoundaryRoundsUp() {
+        // 06:19:59.7 UTC == 16:19:59.7 Brisbane — 0.3s before the 16:20 mark.
+        let reset = Date(timeIntervalSince1970: utcEpoch(2026, 7, 7, 6, 19, 0) + 59.7)
+        let result = ResetFormatting.localResetString(for: reset, now: fixedNow, timeZone: brisbane, locale: enAU)
+        #expect(result.contains("4:20"))
+    }
+
+    @Test func subSecondJitterAfterMinuteBoundaryStaysPut() {
+        // 06:20:00.4 UTC == 16:20:00.4 Brisbane — 0.4s after the 16:20 mark.
+        let reset = Date(timeIntervalSince1970: utcEpoch(2026, 7, 7, 6, 20, 0) + 0.4)
+        let result = ResetFormatting.localResetString(for: reset, now: fixedNow, timeZone: brisbane, locale: enAU)
+        #expect(result.contains("4:20"))
+    }
+
     @Test func countdownUnderAMinute() {
         let result = ResetFormatting.countdownString(until: fixedNow.addingTimeInterval(30), now: fixedNow)
         #expect(result == "in <1m")
