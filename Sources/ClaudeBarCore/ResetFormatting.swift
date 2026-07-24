@@ -11,6 +11,15 @@ public enum ResetFormatting {
         timeZone: TimeZone = .current,
         locale: Locale = .current
     ) -> String {
+        // The API's resets_at carries a little sub-second jitter around the true instant
+        // (server-side recomputation noise) that's invisible at the minute granularity
+        // this renders at — except when the true instant sits within a second of a
+        // minute boundary, where the same reset can otherwise flip its displayed minute
+        // from one poll to the next (e.g. 10:09 one refresh, 10:10 the next). Rounding
+        // first makes the display stable regardless of which side of the boundary a
+        // given poll's jitter lands on.
+        let date = roundedToMinute(date)
+
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
 
@@ -46,6 +55,11 @@ public enum ResetFormatting {
             Date.FormatStyle(locale: locale, timeZone: timeZone).month(.abbreviated).day()
         )
         return "\(day) \(time)"
+    }
+
+    private static func roundedToMinute(_ date: Date) -> Date {
+        let seconds = (date.timeIntervalSinceReferenceDate / 60).rounded() * 60
+        return Date(timeIntervalSinceReferenceDate: seconds)
     }
 
     private static func timeOnly(_ date: Date, timeZone: TimeZone, locale: Locale) -> String {
