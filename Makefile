@@ -11,6 +11,11 @@ VERSION ?= 1.0.0
 BUILD ?= 1
 CODESIGN_OPTS ?=
 
+# Install over the Homebrew cask's location so a local dev build replaces the
+# installed app instead of creating a second copy. A later `brew upgrade`
+# cleanly overwrites the dev build with the real signed release.
+INSTALL_DIR ?= /Applications
+
 APP_BUNDLE := dist/ClaudeBar.app
 
 build:
@@ -34,8 +39,9 @@ bundle: build
 
 install: bundle
 	pkill -x ClaudeBar || true
-	ditto $(APP_BUNDLE) ~/Applications/ClaudeBar.app
-	@echo "Launch with: open ~/Applications/ClaudeBar.app"
+	ditto $(APP_BUNDLE) $(INSTALL_DIR)/ClaudeBar.app
+	rm -rf dist
+	@echo "Launch with: open $(INSTALL_DIR)/ClaudeBar.app"
 
 run:
 	swift run
