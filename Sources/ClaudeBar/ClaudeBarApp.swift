@@ -7,6 +7,7 @@ struct ClaudeBarApp: App {
     @State private var settings = AppSettings()
     @State private var celebrations = CelebrationController()
     @State private var login = OAuthLoginController()
+    @State private var telemetry = TelemetryController()
 
     init() {
         // Backstop for `swift run`: there's no Info.plist LSUIElement in that context
@@ -19,7 +20,7 @@ struct ClaudeBarApp: App {
         MenuBarExtra {
             UsageMenuView(model: model, settings: settings)
         } label: {
-            MenuBarLabelView(model: model, settings: settings, celebrations: celebrations)
+            MenuBarLabelView(model: model, settings: settings, celebrations: celebrations, telemetry: telemetry)
         }
         .menuBarExtraStyle(.window)
 

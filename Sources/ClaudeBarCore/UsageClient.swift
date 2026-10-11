@@ -13,15 +13,7 @@ public struct UsageClient: Sendable {
     public init() {}
 
     public func fetchUsage(token: String) async throws -> UsageResponse {
-        var request = URLRequest(url: Self.endpoint)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 15
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        // Anthropic routes requests without a `claude-code` User-Agent into a much
-        // stricter rate-limit bucket, so this app would otherwise see persistent 429s.
-        request.setValue("claude-code/2.1.114", forHTTPHeaderField: "User-Agent")
-
+        let request = Self.authorizedGET(Self.endpoint, token: token)
         let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -36,5 +28,18 @@ public struct UsageClient: Sendable {
         }
 
         return try JSONDecoder().decode(UsageResponse.self, from: data)
+    }
+
+    /// The headers every OAuth-authenticated `api.anthropic.com` call from this app needs.
+    static func authorizedGET(_ url: URL, token: String) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        // Anthropic routes requests without a `claude-code` User-Agent into a much
+        // stricter rate-limit bucket, so this app would otherwise see persistent 429s.
+        request.setValue("claude-code/2.1.114", forHTTPHeaderField: "User-Agent")
+        return request
     }
 }

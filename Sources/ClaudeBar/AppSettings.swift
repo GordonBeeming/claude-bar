@@ -70,6 +70,10 @@ final class AppSettings {
         static let showMenuBarFlame = "showMenuBarFlame"
         static let celebrationsEnabled = "celebrationsEnabled"
         static let credentialSource = "credentialSource"
+        static let telemetryEnabled = "telemetryEnabled"
+        static let telemetryIntervalMinutes = "telemetryIntervalMinutes"
+        static let telemetryRetentionDays = "telemetryRetentionDays"
+        static let telemetryDirectory = "telemetryDirectory"
 
         static func celebrationEnabled(_ trigger: CelebrationTrigger) -> String {
             "celebration.\(trigger.rawValue).enabled"
@@ -117,6 +121,38 @@ final class AppSettings {
     /// opts into self-contained sign-in from Settings.
     var credentialSource: CredentialSource {
         didSet { defaults.set(credentialSource.rawValue, forKey: Keys.credentialSource) }
+    }
+
+    /// Opt-in: nothing is written to disk until the user turns this on.
+    var telemetryEnabled: Bool {
+        didSet { defaults.set(telemetryEnabled, forKey: Keys.telemetryEnabled) }
+    }
+
+    static let telemetryIntervalChoices = [1, 5, 15, 30, 60]
+
+    var telemetryIntervalMinutes: Int {
+        didSet { defaults.set(telemetryIntervalMinutes, forKey: Keys.telemetryIntervalMinutes) }
+    }
+
+    /// 0 is "keep forever"; UserDefaults can't store a nil Int.
+    static let telemetryRetentionForever = 0
+    static let telemetryRetentionChoices = [7, 30, 90, 180, 365, telemetryRetentionForever]
+
+    var telemetryRetentionDays: Int {
+        didSet { defaults.set(telemetryRetentionDays, forKey: Keys.telemetryRetentionDays) }
+    }
+
+    var telemetryDirectory: URL {
+        didSet { defaults.set(telemetryDirectory.path, forKey: Keys.telemetryDirectory) }
+    }
+
+    var telemetryConfig: TelemetryConfig {
+        TelemetryConfig(
+            enabled: telemetryEnabled,
+            intervalSeconds: TimeInterval(telemetryIntervalMinutes * 60),
+            retentionDays: telemetryRetentionDays == Self.telemetryRetentionForever ? nil : telemetryRetentionDays,
+            sinks: [.file(directory: telemetryDirectory)]
+        )
     }
 
     // Per-trigger enabled/reaction live in dictionaries (rather than six explicit
@@ -185,7 +221,11 @@ final class AppSettings {
             Keys.fuelTankMode: false,
             Keys.showMenuBarFlame: true,
             Keys.celebrationsEnabled: false,
-            Keys.credentialSource: CredentialSource.claudeCode.rawValue
+            Keys.credentialSource: CredentialSource.claudeCode.rawValue,
+            Keys.telemetryEnabled: false,
+            Keys.telemetryIntervalMinutes: Int(TelemetryConfig.defaultIntervalSeconds / 60),
+            Keys.telemetryRetentionDays: TelemetryConfig.defaultRetentionDays,
+            Keys.telemetryDirectory: TelemetryConfig.defaultDirectory.path
         ]
         // Each trigger defaults to enabled with its suggested effect, so once the
         // master switch is turned on the mapping is ready without further setup.
@@ -204,6 +244,22 @@ final class AppSettings {
         celebrationsEnabled = defaults.bool(forKey: Keys.celebrationsEnabled)
         credentialSource = defaults.string(forKey: Keys.credentialSource)
             .flatMap(CredentialSource.init(rawValue:)) ?? .claudeCode
+
+        telemetryEnabled = defaults.bool(forKey: Keys.telemetryEnabled)
+        let storedInterval = defaults.integer(forKey: Keys.telemetryIntervalMinutes)
+        // Snap a hand-edited interval onto the menu's choices so the picker always has a selection.
+        telemetryIntervalMinutes = Self.telemetryIntervalChoices.contains(storedInterval)
+            ? storedInterval
+            : Int(TelemetryConfig.defaultIntervalSeconds / 60)
+        let storedRetention = defaults.integer(forKey: Keys.telemetryRetentionDays)
+        // Snap a hand-edited value onto the menu's choices so the picker always has a selection.
+        telemetryRetentionDays = Self.telemetryRetentionChoices.contains(storedRetention)
+            ? storedRetention
+            : TelemetryConfig.defaultRetentionDays
+        let storedDirectory = defaults.string(forKey: Keys.telemetryDirectory) ?? ""
+        telemetryDirectory = storedDirectory.isEmpty
+            ? TelemetryConfig.defaultDirectory
+            : URL(filePath: (storedDirectory as NSString).expandingTildeInPath, directoryHint: .isDirectory)
 
         var enabledStore: [String: Bool] = [:]
         var reactionStore: [String: ReactionChoice] = [:]
