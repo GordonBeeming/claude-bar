@@ -90,4 +90,4 @@ Tag `vX.Y`, publish a GitHub release for it, and CI does the rest: signs with De
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The Claude name and logomark belong to Anthropic and aren't covered by it; see [TRADEMARKS.md](TRADEMARKS.md).
