@@ -112,31 +112,32 @@ struct SettingsView: View {
                             Text(retentionLabel(days)).tag(days)
                         }
                     }
+                }
 
-                    LabeledContent("Folder") {
-                        Text(abbreviatedPath(settings.telemetryDirectory))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                    }
+                // Shown while off too, so the folder can be picked before the first recording.
+                LabeledContent("Folder") {
+                    Text(abbreviatedPath(settings.telemetryDirectory))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
 
-                    HStack {
-                        Spacer()
-                        Button("Choose…") { chooseTelemetryFolder() }
-                        Button("Show in Finder") { showTelemetryFolder() }
-                        if settings.telemetryDirectory != TelemetryConfig.defaultDirectory {
-                            Button("Use default") { settings.telemetryDirectory = TelemetryConfig.defaultDirectory }
-                        }
-                    }
-
-                    if let telemetryFolderError {
-                        Text(telemetryFolderError)
-                            .font(.caption)
-                            .foregroundStyle(.red)
+                HStack {
+                    Spacer()
+                    Button("Choose…") { chooseTelemetryFolder() }
+                    Button("Show in Finder") { showTelemetryFolder() }
+                    if settings.telemetryDirectory != TelemetryConfig.defaultDirectory {
+                        Button("Use default") { settings.telemetryDirectory = TelemetryConfig.defaultDirectory }
                     }
                 }
 
-                Text("Writes your limits, Claude Code token counts, extra usage, guest passes and credit offers as OpenTelemetry (OTLP JSON) files you can chart or feed to a Collector. Nothing leaves this Mac.")
+                if let telemetryFolderError {
+                    Text(telemetryFolderError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                Text("Writes your limits, Claude Code token counts, extra usage, guest passes and credit offers as OpenTelemetry (OTLP JSON) files you can chart or feed to a Collector. ClaudeBar never uploads them, but a folder that syncs (Documents with iCloud, say) will copy them like any other file.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -20,8 +20,11 @@ final class TelemetryController {
     private weak var model: UsageViewModel?
     private weak var settings: AppSettings?
     private var loopTask: Task<Void, Never>?
+    /// The opt-out reset. A loop started afterwards waits for it, so a quick off-then-on can't
+    /// have the old reset delete the new baseline.
+    private var resetTask: Task<Void, Never>?
     private var running: (enabled: Bool, interval: TimeInterval)?
-    private var lastOffersFetch: Date?
+    private var lastOffersFetch: (at: Date, source: CredentialSource)?
     private var lastOffers = AccountOffers()
 
     init() {
@@ -62,11 +65,21 @@ final class TelemetryController {
         let wanted = (enabled: config.enabled, interval: config.intervalSeconds)
         if let running, running == wanted { return }
         running = wanted
-        loopTask?.cancel()
+        let previousLoop = loopTask
+        previousLoop?.cancel()
         loopTask = nil
 
         guard config.enabled else {
-            Task {
+            lastOffers = AccountOffers()
+            lastOffersFetch = nil
+            let recorder = recorder
+            let logger = logger
+            let pendingReset = resetTask
+            resetTask = Task {
+                // Cancelling doesn't interrupt a stamp already running on the recorder, so
+                // let it land first; otherwise it could write state after the reset.
+                await previousLoop?.value
+                await pendingReset?.value
                 do {
                     try await recorder.reset()
                     logger.notice("telemetry off: cleared its state")
@@ -77,7 +90,9 @@ final class TelemetryController {
             return
         }
 
+        let pendingReset = resetTask
         loopTask = Task { [weak self] in
+            await pendingReset?.value
             await self?.waitForFirstUsage()
             while !Task.isCancelled {
                 await self?.stamp()
@@ -116,9 +131,15 @@ final class TelemetryController {
             logger.notice("telemetry stamp without usage: last poll is missing or stale")
         }
 
-        if lastOffersFetch.map({ now.timeIntervalSince($0) >= Self.offersRefreshInterval }) ?? true {
+        // Offers belong to whichever account the source signs in as, so a source switch
+        // refetches straight away rather than pairing new usage with old offers.
+        let source = settings.credentialSource
+        let offersStale = lastOffersFetch.map {
+            $0.source != source || now.timeIntervalSince($0.at) >= Self.offersRefreshInterval
+        } ?? true
+        if offersStale {
             lastOffers = await model.fetchAccountOffers()
-            lastOffersFetch = now
+            lastOffersFetch = (now, source)
         }
         // Switching telemetry off while the offers fetch was in flight must not still write.
         guard !Task.isCancelled, settings.telemetryEnabled else { return }
@@ -134,8 +155,9 @@ final class TelemetryController {
             telemetry stamp: \(report.metricCount, privacy: .public) metrics, \
             events [\(report.eventNames.joined(separator: ","), privacy: .public)]
             """)
+        // Problems can name transcript paths, which carry project names.
         for problem in report.problems {
-            logger.error("telemetry: \(problem, privacy: .public)")
+            logger.error("telemetry: \(problem, privacy: .private)")
         }
     }
 }

@@ -66,20 +66,35 @@ public actor TelemetryRecorder {
         // Offers that couldn't be fetched this time fall back to the last-known values, so
         // their gauges keep a continuous line instead of gapping on a transient failure.
         let metrics = TelemetryStamp.metrics(usage: usage, offers: observed.offers, tokens: state.scan, now: now)
-        state.observed = observed
         report.metricCount = metrics.count
         report.eventNames = events.map(\.eventName)
 
         let metricsRequest = OTLP.MetricsRequest(resource: resource, scope: scope, metrics: metrics)
         let logsRequest = OTLP.LogsRequest(resource: resource, scope: scope, logRecords: events)
+        var exportFailed = false
         for sink in sinks {
             do {
                 if !metrics.isEmpty { try sink.export(metrics: metricsRequest, at: now) }
                 try sink.export(logs: logsRequest, at: now)
+            } catch {
+                exportFailed = true
+                report.problems.append("sink \(type(of: sink)): \(error.localizedDescription)")
+                continue
+            }
+            do {
                 if let retentionDays { try sink.prune(retentionDays: retentionDays, now: now) }
             } catch {
-                report.problems.append("sink \(type(of: sink)): \(error.localizedDescription)")
+                report.problems.append("sink \(type(of: sink)) prune: \(error.localizedDescription)")
             }
+        }
+        // Events are diffs against the last observation, so advancing it after a failed write
+        // would lose them for good; holding it back re-emits them on the next stamp. Token
+        // totals are cumulative and lose nothing either way, so the scan still advances.
+        // With one sink this is exact; a second sink would need its own pending state.
+        if exportFailed {
+            report.eventNames = []
+        } else {
+            state.observed = observed
         }
 
         self.state = state

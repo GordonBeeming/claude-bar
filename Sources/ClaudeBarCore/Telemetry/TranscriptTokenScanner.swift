@@ -83,7 +83,7 @@ public struct TranscriptTokenScanner: Sendable {
 
     /// Reads whatever was appended since the last scan and adds it to the totals. A file that
     /// first appears after the baseline is read from the start; one that shrank (rewritten)
-    /// is read again from the start too.
+    /// is re-baselined at its new end.
     ///
     /// A file that can't be read (deleted between listing and opening, permissions) is
     /// skipped and reported back rather than failing the whole scan; its cursor is left
@@ -96,7 +96,10 @@ public struct TranscriptTokenScanner: Sendable {
             seen.insert(file.key)
             var cursor = state.cursors[file.key] ?? .init(offset: 0, modified: file.modified, recentKeys: [])
             if file.size < cursor.offset {
-                cursor = .init(offset: 0, modified: file.modified, recentKeys: [])
+                // A rewrite (compaction, truncation) can keep messages already counted, and
+                // the dedupe window is far too small to recognise them, so replaying it would
+                // double-count. Re-baseline instead: only what's appended from here counts.
+                cursor = .init(offset: file.size, modified: file.modified, recentKeys: [])
             }
             if file.size > cursor.offset {
                 // Totals are staged per file so a read that fails part-way can't leave half a

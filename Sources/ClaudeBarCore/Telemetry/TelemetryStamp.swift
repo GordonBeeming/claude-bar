@@ -17,11 +17,21 @@ public struct ObservedState: Codable, Sendable, Equatable {
     }
 
     public var limits: [String: Limit]?
+    /// Keys shared by more than one limit in the same response (scoped limits with no model
+    /// identity). Which one is which can't be told apart between stamps, so they're kept out
+    /// of `limits` and never compared, the same rule celebrations follow.
+    public var ambiguousLimitKeys: Set<String>?
     public var extraUsage: Extra?
     public var offers: AccountOffers
 
-    public init(limits: [String: Limit]? = nil, extraUsage: Extra? = nil, offers: AccountOffers = AccountOffers()) {
+    public init(
+        limits: [String: Limit]? = nil,
+        ambiguousLimitKeys: Set<String>? = nil,
+        extraUsage: Extra? = nil,
+        offers: AccountOffers = AccountOffers()
+    ) {
         self.limits = limits
+        self.ambiguousLimitKeys = ambiguousLimitKeys
         self.extraUsage = extraUsage
         self.offers = offers
     }
@@ -201,8 +211,14 @@ public enum TelemetryStamp {
     public static func observe(usage: UsageResponse?, offers: AccountOffers, previous: ObservedState?) -> ObservedState {
         var observed = previous ?? ObservedState()
         if let usage {
+            let ambiguous = Set(
+                Dictionary(grouping: usage.limits, by: \.celebrationKey)
+                    .filter { $0.value.count > 1 }
+                    .keys
+            )
+            observed.ambiguousLimitKeys = ambiguous
             observed.limits = Dictionary(
-                usage.limits.map { limit in
+                usage.limits.filter { !ambiguous.contains($0.celebrationKey) }.map { limit in
                     (limit.celebrationKey, ObservedState.Limit(
                         percent: limit.percent,
                         severity: limit.severity.rawValue,
@@ -213,7 +229,7 @@ public enum TelemetryStamp {
                         })
                     ))
                 },
-                uniquingKeysWith: { _, latest in latest }
+                uniquingKeysWith: { first, _ in first }
             )
             if let extra = usage.extraUsage {
                 observed.extraUsage = .init(isEnabled: extra.isEnabled, monthlyLimit: extra.monthlyLimit, usedCredits: extra.usedCredits)
@@ -231,7 +247,10 @@ public enum TelemetryStamp {
         var events: [OTLP.LogRecord] = []
 
         if let before = previous.limits, let after = current.limits {
-            for key in after.keys.sorted() {
+            // A key that's ambiguous on either side would compare different limits, or read
+            // a limit dropping into ambiguity as it disappearing.
+            let skipped = (previous.ambiguousLimitKeys ?? []).union(current.ambiguousLimitKeys ?? [])
+            for key in after.keys.sorted() where !skipped.contains(key) {
                 guard let limit = after[key] else { continue }
                 let attributes = stringAttributes(limit.attributes)
                 guard let old = before[key] else {
@@ -259,7 +278,7 @@ public enum TelemetryStamp {
                     ))
                 }
             }
-            for key in before.keys.sorted() where after[key] == nil {
+            for key in before.keys.sorted() where after[key] == nil && !skipped.contains(key) {
                 guard let limit = before[key] else { continue }
                 events.append(.init(
                     time: now, eventName: "limit.disappeared",

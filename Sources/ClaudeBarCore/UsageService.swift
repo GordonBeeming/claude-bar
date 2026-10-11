@@ -53,7 +53,9 @@ public actor UsageService {
     }
 
     private let accountClient = AccountClient()
-    private var organizationUUID: String?
+    /// Keyed by the token that resolved it: switching source or signing in to another
+    /// account must never pair a new token with the old account's organization.
+    private var organizationUUID: (token: String, uuid: String)?
 
     /// Guest passes and promotional credit for telemetry. Best effort by design: each part
     /// that fails is logged and left nil, and nothing here clears or swaps credentials — the
@@ -65,12 +67,12 @@ public actor UsageService {
         }
 
         let organization: String
-        if let cached = organizationUUID {
-            organization = cached
+        if let cached = organizationUUID, cached.token == token {
+            organization = cached.uuid
         } else {
             do {
                 organization = try await accountClient.organizationUUID(token: token)
-                organizationUUID = organization
+                organizationUUID = (token, organization)
             } catch {
                 logger.error("account offers skipped: organization lookup failed: \(String(describing: error), privacy: .public)")
                 return AccountOffers()
@@ -91,12 +93,18 @@ public actor UsageService {
         return offers
     }
 
+    /// Same selection as `fetch()`: Claude Code's token stands in only when ours is missing or
+    /// genuinely rejected. On a network or server error the usage just shown may still be
+    /// from our account, so falling back could pair it with another account's offers; skip.
     private func accountToken(preferSelfContained: Bool) async -> String? {
         if preferSelfContained {
             do {
                 if let token = try await selfContained.validAccessToken() { return token }
+            } catch OAuthClient.OAuthError.http(let status) where status == 400 || status == 401 {
+                logger.notice("self-contained refresh rejected (\(status, privacy: .public)) for account offers, using Claude Code token")
             } catch {
-                logger.notice("self-contained token unavailable for account offers: \(String(describing: error), privacy: .public)")
+                logger.notice("account offers skipped: self-contained token unavailable: \(String(describing: error), privacy: .public)")
+                return nil
             }
         }
         return credentialsProvider.loadAccessToken()

@@ -169,7 +169,7 @@ struct TranscriptTokenScannerTests {
         #expect(state.totals["claude-sonnet-5-5"]?.messages == 1)
     }
 
-    @Test func rewrittenShorterFileIsReadAgain() throws {
+    @Test func rewrittenShorterFileIsRebaselinedNotReplayed() throws {
         let root = try temporaryDirectory()
         let file = root.appending(path: "s.jsonl")
         let scanner = TranscriptTokenScanner(root: root)
@@ -178,7 +178,12 @@ struct TranscriptTokenScannerTests {
         try scanner.scan(&state, now: Date())
         #expect(state.totals["claude-opus-5-5"]?.messages == 2)
 
+        // A compaction keeps m1, already counted; replaying it would count it twice.
         try FileManager.default.removeItem(at: file)
+        try append(usageLine(id: "m1", request: "r1") + "\n", to: file)
+        try scanner.scan(&state, now: Date())
+        #expect(state.totals["claude-opus-5-5"]?.messages == 2)
+
         try append(usageLine(id: "m3", request: "r3") + "\n", to: file)
         try scanner.scan(&state, now: Date())
         #expect(state.totals["claude-opus-5-5"]?.messages == 3)
@@ -260,6 +265,36 @@ struct TelemetryStampTests {
             previous: before
         )
         #expect(TelemetryStamp.events(previous: before, current: after, now: now).map(\.eventName) == ["limit.appeared"])
+    }
+
+    @Test func indistinguishableLimitsNeverFireEvents() {
+        // Two scoped limits with no model identity share a key; list order swapping must not
+        // read as one of them resetting or changing severity.
+        let before = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [
+                limit("weekly_scoped", group: "weekly", percent: 90, severity: .critical),
+                limit("weekly_scoped", group: "weekly", percent: 5),
+            ]),
+            offers: AccountOffers(),
+            previous: nil
+        )
+        let after = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [
+                limit("weekly_scoped", group: "weekly", percent: 5),
+                limit("weekly_scoped", group: "weekly", percent: 90, severity: .critical),
+            ]),
+            offers: AccountOffers(),
+            previous: before
+        )
+        #expect(TelemetryStamp.events(previous: before, current: after, now: now).isEmpty)
+
+        // One of them going away leaves a single limit under that key; it isn't "appeared".
+        let single = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [limit("weekly_scoped", group: "weekly", percent: 5)]),
+            offers: AccountOffers(),
+            previous: after
+        )
+        #expect(TelemetryStamp.events(previous: after, current: single, now: now).isEmpty)
     }
 
     private func passes(_ remaining: Int?, eligible: Bool = true) -> AccountOffers {
@@ -421,6 +456,44 @@ struct TelemetryRecorderTests {
 
         try await recorder.reset()
         #expect(!FileManager.default.fileExists(atPath: stateURL.path))
+    }
+
+    private struct UnwritableSink: TelemetrySink {
+        struct Unwritable: Error {}
+        func export(metrics: OTLP.MetricsRequest, at date: Date) throws { throw Unwritable() }
+        func export(logs: OTLP.LogsRequest, at date: Date) throws { throw Unwritable() }
+        func prune(retentionDays: Int, now: Date) throws {}
+    }
+
+    @Test func eventsSurviveAFailedWrite() async throws {
+        let base = try temporaryDirectory()
+        let output = base.appending(path: "out", directoryHint: .isDirectory)
+        let recorder = TelemetryRecorder(
+            stateURL: base.appending(path: "state/telemetry-state.json"),
+            scanner: TranscriptTokenScanner(root: base.appending(path: "projects", directoryHint: .isDirectory)),
+            resource: .init(attributes: []),
+            scope: .init(name: "t", version: "1")
+        )
+        let start = Date()
+        _ = await recorder.stamp(
+            usage: UsageResponse(limits: [limit("session", group: "session", percent: 70)]),
+            offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)], retentionDays: 90, now: start
+        )
+
+        let reset = UsageResponse(limits: [limit("session", group: "session", percent: 0)])
+        let failed = await recorder.stamp(
+            usage: reset, offers: AccountOffers(), sinks: [UnwritableSink()], retentionDays: 90,
+            now: start.addingTimeInterval(300)
+        )
+        #expect(!failed.problems.isEmpty)
+        #expect(failed.eventNames.isEmpty)
+
+        let retried = await recorder.stamp(
+            usage: reset, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)], retentionDays: 90,
+            now: start.addingTimeInterval(600)
+        )
+        #expect(retried.problems.isEmpty)
+        #expect(retried.eventNames == ["limit.reset"])
     }
 
     @Test func keepForeverNeverPrunes() async throws {
