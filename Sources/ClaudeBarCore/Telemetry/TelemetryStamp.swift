@@ -304,8 +304,10 @@ public enum TelemetryStamp {
     }
 
     private static func guestPassEvents(before: GuestPassStatus?, after: GuestPassStatus?, now: Date) -> [OTLP.LogRecord] {
-        guard let after else { return [] }
-        let was = before.map { $0.eligible ? ($0.remaining ?? 0) : 0 } ?? 0
+        // No earlier successful fetch means the previous count is unknown, not zero; the
+        // first value seen is only a baseline.
+        guard let before, let after else { return [] }
+        let was = before.eligible ? (before.remaining ?? 0) : 0
         let available = after.eligible ? (after.remaining ?? 0) : 0
         let attributes: [OTLP.KeyValue] = [
             .init("campaign", .string(after.campaign)),
@@ -333,13 +335,13 @@ public enum TelemetryStamp {
     }
 
     private static func creditGrantEvents(previous: ObservedState, current: ObservedState, now: Date) -> [OTLP.LogRecord] {
-        guard let after = current.offers.creditGrant else { return [] }
-        let wasClaimable = previous.offers.creditGrant?.isClaimable ?? false
+        guard let before = previous.offers.creditGrant, let after = current.offers.creditGrant else { return [] }
+        let wasClaimable = before.isClaimable
         var attributes: [OTLP.KeyValue] = [.init("campaign", .string(after.campaign))]
-        if let amount = after.amountMinorUnits ?? previous.offers.creditGrant?.amountMinorUnits {
+        if let amount = after.amountMinorUnits ?? before.amountMinorUnits {
             attributes.append(.init("amount_minor_units", .int(amount)))
         }
-        if let currency = after.currency ?? previous.offers.creditGrant?.currency {
+        if let currency = after.currency ?? before.currency {
             attributes.append(.init("currency", .string(currency)))
         }
 

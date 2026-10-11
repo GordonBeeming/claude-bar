@@ -93,6 +93,9 @@ final class TelemetryController {
         let pendingReset = resetTask
         loopTask = Task { [weak self] in
             await pendingReset?.value
+            // Tokens count from the moment of opting in, not from the first full stamp,
+            // which can be up to `firstUsageWait` later.
+            await self?.startCounting()
             await self?.waitForFirstUsage()
             while !Task.isCancelled {
                 await self?.stamp()
@@ -116,21 +119,15 @@ final class TelemetryController {
         }
     }
 
+    private func startCounting() async {
+        for problem in await recorder.startCounting(now: Date()) {
+            logger.error("telemetry: \(problem, privacy: .private)")
+        }
+    }
+
     private func stamp() async {
-        guard let model, let settings else { return }
-        let config = settings.telemetryConfig
-        guard config.enabled else { return }
+        guard let model, let settings, settings.telemetryEnabled else { return }
         let now = Date()
-
-        let usage: UsageResponse? = if let updated = model.lastUpdated, now.timeIntervalSince(updated) <= Self.usageFreshness {
-            model.lastResponse
-        } else {
-            nil
-        }
-        if usage == nil {
-            logger.notice("telemetry stamp without usage: last poll is missing or stale")
-        }
-
         // Offers belong to whichever account the source signs in as, so a source switch
         // refetches straight away rather than pairing new usage with old offers.
         let source = settings.credentialSource
@@ -141,8 +138,22 @@ final class TelemetryController {
             lastOffers = await model.fetchAccountOffers()
             lastOffersFetch = (now, source)
         }
-        // Switching telemetry off while the offers fetch was in flight must not still write.
-        guard !Task.isCancelled, settings.telemetryEnabled else { return }
+        // Read everything else after the last suspension point: switching telemetry off, or
+        // changing the folder, retention or source while the offers fetch was in flight must
+        // not write to the old place or mix two accounts.
+        let config = settings.telemetryConfig
+        guard !Task.isCancelled, config.enabled, settings.credentialSource == source else { return }
+
+        let usage: UsageResponse? = if let updated = model.lastUpdated,
+            now.timeIntervalSince(updated) <= Self.usageFreshness,
+            model.lastResponseSource == source {
+            model.lastResponse
+        } else {
+            nil
+        }
+        if usage == nil {
+            logger.notice("telemetry stamp without usage: last poll is missing, stale, or from another credential source")
+        }
 
         let report = await recorder.stamp(
             usage: usage,

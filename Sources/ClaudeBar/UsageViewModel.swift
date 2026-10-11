@@ -19,6 +19,9 @@ final class UsageViewModel {
     private(set) var limits: [UsageLimit] = []
     /// The whole last successful response, for telemetry, which also wants `extraUsage`.
     private(set) var lastResponse: UsageResponse?
+    /// The credential source `lastResponse` was requested with, so telemetry never pairs one
+    /// account's usage with another's offers after a switch.
+    private(set) var lastResponseSource: CredentialSource?
     private(set) var lastUpdated: Date?
     private(set) var authState: AuthState = .ok
     private(set) var lastError: String?
@@ -101,10 +104,11 @@ final class UsageViewModel {
         defer { isRefreshing = false }
 
         do {
-            let preferSelfContained = settings?.credentialSource == .selfContained
-            let response = try await service.fetch(preferSelfContained: preferSelfContained)
+            let source = settings?.credentialSource ?? .claudeCode
+            let response = try await service.fetch(preferSelfContained: source == .selfContained)
             limits = response.limits
             lastResponse = response
+            lastResponseSource = source
             lastUpdated = Date()
             authState = .ok
             lastError = nil

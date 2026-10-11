@@ -106,6 +106,28 @@ public actor TelemetryRecorder {
         return report
     }
 
+    /// Sets the token baseline now if there isn't one yet, so counting starts at opt-in
+    /// rather than at the first stamp. Returns problems to log; a failure here just leaves
+    /// the first stamp to take the baseline instead.
+    public func startCounting(now: Date) -> [String] {
+        var report = TelemetryStampReport()
+        var state = loadState(report: &report)
+        guard state.scan == nil else { return report.problems }
+        do {
+            state.scan = try scanner.baseline(now: now)
+        } catch {
+            report.problems.append("transcript baseline failed: \(error.localizedDescription)")
+            return report.problems
+        }
+        self.state = state
+        do {
+            try save(state)
+        } catch {
+            report.problems.append("state save failed: \(error.localizedDescription)")
+        }
+        return report.problems
+    }
+
     /// Forgets everything: the next stamp starts a fresh baseline. Called when telemetry is
     /// switched off, so switching it back on doesn't count the tokens used while it was off
     /// and the counters restart with a new start time, which OTLP reads as a counter reset.

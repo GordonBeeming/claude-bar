@@ -333,9 +333,20 @@ struct TelemetryStampTests {
         AccountOffers(creditGrant: CreditGrantStatus(campaign: "feature_of_the_week", available: available, eligible: true, granted: granted, amountMinorUnits: 2000, currency: "USD"))
     }
 
+    @Test func offersFirstSeenAfterAFailedFetchAreOnlyABaseline() {
+        // The previous stamp's fetch failed, so whether these existed before is unknown.
+        let current = TelemetryStamp.observe(
+            usage: nil,
+            offers: AccountOffers(guestPasses: passes(3).guestPasses, creditGrant: grant(available: true).creditGrant),
+            previous: ObservedState()
+        )
+        #expect(TelemetryStamp.events(previous: ObservedState(), current: current, now: now).isEmpty)
+    }
+
     @Test func creditGrantClaimedIsUsed() throws {
-        let before = TelemetryStamp.observe(usage: nil, offers: grant(available: true), previous: ObservedState())
-        #expect(TelemetryStamp.events(previous: ObservedState(), current: before, now: now).map(\.eventName) == ["credit_grant.available"])
+        let unclaimable = TelemetryStamp.observe(usage: nil, offers: grant(available: false), previous: ObservedState())
+        let before = TelemetryStamp.observe(usage: nil, offers: grant(available: true), previous: unclaimable)
+        #expect(TelemetryStamp.events(previous: unclaimable, current: before, now: now).map(\.eventName) == ["credit_grant.available"])
 
         let after = TelemetryStamp.observe(usage: nil, offers: grant(available: false, granted: true), previous: before)
         let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first)
@@ -494,6 +505,34 @@ struct TelemetryRecorderTests {
         )
         #expect(retried.problems.isEmpty)
         #expect(retried.eventNames == ["limit.reset"])
+    }
+
+    @Test func tokensWrittenBeforeTheFirstStampStillCount() async throws {
+        let base = try temporaryDirectory()
+        let transcripts = base.appending(path: "projects", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: transcripts, withIntermediateDirectories: true)
+        let transcript = transcripts.appending(path: "s.jsonl")
+        try append(usageLine(id: "before", request: "r0") + "\n", to: transcript)
+        let recorder = TelemetryRecorder(
+            stateURL: base.appending(path: "state/telemetry-state.json"),
+            scanner: TranscriptTokenScanner(root: transcripts),
+            resource: .init(attributes: []),
+            scope: .init(name: "t", version: "1")
+        )
+        let start = Date()
+        #expect(await recorder.startCounting(now: start).isEmpty)
+
+        // Written while the first stamp waits for usage: after opting in, so it counts.
+        try append(usageLine(id: "waiting", request: "r1") + "\n", to: transcript)
+        let output = base.appending(path: "out", directoryHint: .isDirectory)
+        _ = await recorder.stamp(
+            usage: nil, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)], retentionDays: 90,
+            now: start.addingTimeInterval(30)
+        )
+        let metricsFile = output.appending(path: FileTelemetrySink.fileName(prefix: "metrics", on: start))
+        let line = try String(contentsOf: metricsFile, encoding: .utf8)
+        #expect(line.contains("\"claude.code.messages\""))
+        #expect(line.contains("\"asInt\":\"1\""))
     }
 
     @Test func keepForeverNeverPrunes() async throws {
