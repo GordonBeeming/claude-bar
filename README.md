@@ -53,7 +53,72 @@ Open **Settings…** from the dropdown:
 
 - **Usage colours** — by default the icon turns orange/red when Claude's API says a limit is at warning/critical. Untick *Use Claude's severity levels* and you get a blue → orange → red bar: drag the two splitters to pick your own warning and critical percentages.
 - **⛽ Fuel tank mode** — flip every percentage and progress bar from *used* to *remaining*. Instead of a limit filling up from 0 → 100% as you burn through it, it starts full and drains toward empty, like a fuel gauge. It's purely cosmetic: colours, the 🔥 over-pace flame, and the steady-pace marker all still track real usage, so a nearly-empty tank still turns red.
+- **Telemetry** — off by default. Turn it on to keep your own usage history on disk (see [Telemetry](#telemetry)).
 - **Launch at login** — on by default, toggle it here.
+
+## Telemetry
+
+ClaudeBar can write your usage history to disk in OpenTelemetry's OTLP JSON format, so you can chart it with `jq` and a spreadsheet or feed it into any OpenTelemetry tool. It's opt-in. Nothing is written until you tick **Record usage history** in Settings, and nothing leaves your Mac.
+
+By default the files go to `~/Documents/ClaudeBar Telemetry`. You can choose another folder in Settings, along with how often to record (every 1, 5, 15, 30 or 60 minutes, default 5) and how long to keep files (7, 30, 90, 180 or 365 days, or forever; default 90). Each day gets two files:
+
+- `metrics-YYYY-MM-DD.jsonl` holds one OTLP `ExportMetricsServiceRequest` per line, one line per recording.
+- `logs-YYYY-MM-DD.jsonl` holds one OTLP `ExportLogsServiceRequest` per line, written only when something changed.
+
+Files older than the retention window are deleted. ClaudeBar only ever deletes files matching those two name patterns, so other files in the folder are left alone.
+
+### Metrics
+
+| Metric | Type | What it is |
+|---|---|---|
+| `claude.usage.limit.utilization` | gauge, % | Each limit in the menu (session, weekly, per-model weekly, spend). Attributes: `limit.kind`, `limit.name`, `limit.group`, `model.id`/`model.name` for model-scoped limits, `severity`, `is_active` |
+| `claude.usage.limit.resets_at` | gauge, Unix seconds | When that limit's window ends |
+| `claude.usage.limit.window_elapsed` | gauge, % | How far through its window the limit is. Utilization above this means you're burning faster than an even pace |
+| `claude.extra_usage.enabled`, `.used_credits`, `.monthly_limit`, `.utilization` | gauge | Pay-as-you-go extra usage, as the API reports it (`currency`, `decimal_places` attributes) |
+| `claude.code.tokens` | cumulative sum | Tokens per `model` and `token.type`: `input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h` |
+| `claude.code.messages` | cumulative sum | Model responses per `model` |
+| `claude.code.server_tool_requests` | cumulative sum | Web search and web fetch calls per `model` and `tool` |
+| `claude.guest_passes.available`, `.limit` | gauge | Claude Code guest passes you can still hand out, and how many you get in total |
+| `claude.credit_grant.available`, `.amount` | gauge | 1 while a promotional extra-usage credit is waiting to be claimed, and its value in minor units (cents) |
+
+Token counts come from Claude Code's transcripts in `~/.claude/projects`, because the usage API doesn't report tokens. That means they only cover Claude Code on this Mac. claude.ai, the desktop app and your other machines aren't included. Counting starts when you turn telemetry on rather than backfilling old transcripts. Turning it off and on again starts a new count, which OpenTelemetry tools see as a counter reset.
+
+### Events
+
+| Event (`event.name`) | When |
+|---|---|
+| `limit.reset` | A limit's usage dropped back as its window rolled over |
+| `limit.severity_changed` | A limit moved between normal, warning and critical |
+| `limit.appeared`, `limit.disappeared` | A limit showed up in or dropped out of the API response (a new per-model limit, say) |
+| `extra_usage.enabled_changed` | Extra usage was switched on or off |
+| `guest_pass.available`, `guest_pass.gone` | Guest passes became available, or one was redeemed or withdrawn |
+| `credit_grant.available`, `credit_grant.gone` | A promotional credit was offered, or stopped being offered |
+
+The API doesn't say why an offer went away, so `gone` events carry an `inferred_reason`. A guest pass that's no longer counted was redeemed (`used`). If you stop being eligible for passes altogether, they're `expired`. A credit grant is `used` if the API marks it granted, or if your headroom jumped at the same moment: the extra-usage cap went up, or a limit's usage fell without its window resetting. Otherwise it's `expired`.
+
+Guest passes and credit grants come from the same account endpoints Claude Code uses for `/passes` and its promotions. They aren't a documented API, so if one stops answering, that part is skipped and everything else is still recorded. Your referral code and link are never written.
+
+### Reading it with the OpenTelemetry Collector
+
+The [OTLP JSON file receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/otlpjsonfilereceiver) (`otlp_json_file`; older Collector releases call it `otlpjsonfile`) reads these files as they are. From there you can export to whatever backend you use:
+
+```yaml
+receivers:
+  otlp_json_file:
+    include:
+      - "/Users/you/Documents/ClaudeBar Telemetry/*.jsonl"
+exporters:
+  debug:
+    verbosity: detailed
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp_json_file]
+      exporters: [debug]
+    logs:
+      receivers: [otlp_json_file]
+      exporters: [debug]
+```
 
 ## How it works
 

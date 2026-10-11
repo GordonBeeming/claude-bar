@@ -1,3 +1,4 @@
+import AppKit
 import ClaudeBarCore
 import SwiftUI
 
@@ -7,6 +8,7 @@ struct SettingsView: View {
     @Bindable var login: OAuthLoginController
 
     @State private var pastedCode = ""
+    @State private var telemetryFolderError: String?
 
     // Codes are pasted from a web page and often carry a trailing newline, which makes the
     // single-line field wrap to a second line. Strip whitespace as it's set — a valid code
@@ -95,6 +97,50 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Telemetry") {
+                Toggle("Record usage history", isOn: $settings.telemetryEnabled)
+
+                if settings.telemetryEnabled {
+                    Picker("Every", selection: $settings.telemetryIntervalMinutes) {
+                        ForEach(AppSettings.telemetryIntervalChoices, id: \.self) { minutes in
+                            Text(minutes == 1 ? "1 minute" : "\(minutes) minutes").tag(minutes)
+                        }
+                    }
+
+                    Picker("Keep", selection: $settings.telemetryRetentionDays) {
+                        ForEach(AppSettings.telemetryRetentionChoices, id: \.self) { days in
+                            Text(retentionLabel(days)).tag(days)
+                        }
+                    }
+
+                    LabeledContent("Folder") {
+                        Text(abbreviatedPath(settings.telemetryDirectory))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+
+                    HStack {
+                        Spacer()
+                        Button("Choose…") { chooseTelemetryFolder() }
+                        Button("Show in Finder") { showTelemetryFolder() }
+                        if settings.telemetryDirectory != TelemetryConfig.defaultDirectory {
+                            Button("Use default") { settings.telemetryDirectory = TelemetryConfig.defaultDirectory }
+                        }
+                    }
+
+                    if let telemetryFolderError {
+                        Text(telemetryFolderError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Text("Writes your limits, Claude Code token counts, extra usage, guest passes and credit offers as OpenTelemetry (OTLP JSON) files you can chart or feed to a Collector. Nothing leaves this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("General") {
                 Toggle("Launch at login", isOn: $model.launchAtLogin)
                     .disabled(!model.launchAtLoginAvailable)
@@ -103,6 +149,44 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 380)
+    }
+
+    private func abbreviatedPath(_ url: URL) -> String {
+        (url.path as NSString).abbreviatingWithTildeInPath
+    }
+
+    private func retentionLabel(_ days: Int) -> String {
+        switch days {
+        case AppSettings.telemetryRetentionForever: "Forever"
+        case 365: "1 year"
+        default: "\(days) days"
+        }
+    }
+
+    private func chooseTelemetryFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use Folder"
+        panel.directoryURL = settings.telemetryDirectory
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        telemetryFolderError = nil
+        settings.telemetryDirectory = url
+    }
+
+    private func showTelemetryFolder() {
+        let url = settings.telemetryDirectory
+        do {
+            // The folder is only created by the first stamp; make it now so Finder has
+            // something to open straight after switching telemetry on.
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            telemetryFolderError = nil
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            telemetryFolderError = "Couldn't open the folder: \(error.localizedDescription)"
+        }
     }
 
     private var menuBarPercentageSelection: Binding<MenuBarPercentageSelection> {

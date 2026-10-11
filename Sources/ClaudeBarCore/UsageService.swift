@@ -51,4 +51,54 @@ public actor UsageService {
         logger.notice("usage served via \(TokenSource.claudeCode.rawValue, privacy: .public)")
         return response
     }
+
+    private let accountClient = AccountClient()
+    private var organizationUUID: String?
+
+    /// Guest passes and promotional credit for telemetry. Best effort by design: each part
+    /// that fails is logged and left nil, and nothing here clears or swaps credentials — the
+    /// usage fetch above owns that decision.
+    public func fetchAccountOffers(preferSelfContained: Bool = false) async -> AccountOffers {
+        guard let token = await accountToken(preferSelfContained: preferSelfContained) else {
+            logger.notice("account offers skipped: no token")
+            return AccountOffers()
+        }
+
+        let organization: String
+        if let cached = organizationUUID {
+            organization = cached
+        } else {
+            do {
+                organization = try await accountClient.organizationUUID(token: token)
+                organizationUUID = organization
+            } catch {
+                logger.error("account offers skipped: organization lookup failed: \(String(describing: error), privacy: .public)")
+                return AccountOffers()
+            }
+        }
+
+        var offers = AccountOffers()
+        do {
+            offers.guestPasses = try await accountClient.guestPasses(organization: organization, token: token)
+        } catch {
+            logger.error("guest pass fetch failed: \(String(describing: error), privacy: .public)")
+        }
+        do {
+            offers.creditGrant = try await accountClient.creditGrant(organization: organization, token: token)
+        } catch {
+            logger.error("credit grant fetch failed: \(String(describing: error), privacy: .public)")
+        }
+        return offers
+    }
+
+    private func accountToken(preferSelfContained: Bool) async -> String? {
+        if preferSelfContained {
+            do {
+                if let token = try await selfContained.validAccessToken() { return token }
+            } catch {
+                logger.notice("self-contained token unavailable for account offers: \(String(describing: error), privacy: .public)")
+            }
+        }
+        return credentialsProvider.loadAccessToken()
+    }
 }

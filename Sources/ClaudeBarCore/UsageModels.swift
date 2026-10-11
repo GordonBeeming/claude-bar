@@ -3,9 +3,69 @@ import Foundation
 /// Root shape of `GET /api/oauth/usage` — a flat list of limits, self-describing by `kind`.
 public struct UsageResponse: Decodable, Sendable {
     public let limits: [UsageLimit]
+    /// Pay-as-you-go credit state. nil when the API omits it or sends a shape we can't read.
+    public let extraUsage: ExtraUsage?
 
-    public init(limits: [UsageLimit]) {
+    public init(limits: [UsageLimit], extraUsage: ExtraUsage? = nil) {
         self.limits = limits
+        self.extraUsage = extraUsage
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case limits
+        case extraUsage = "extra_usage"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        limits = try container.decode([UsageLimit].self, forKey: .limits)
+        // Only telemetry reads this, so a shape change must never cost the menu its limits.
+        extraUsage = try? container.decodeIfPresent(ExtraUsage.self, forKey: .extraUsage)
+    }
+}
+
+/// The `extra_usage` block of the usage response. Every field is optional because the API
+/// sends nulls for anything that doesn't apply (e.g. no monthly limit when it's switched off).
+/// Credit amounts are passed through as the API reports them; `decimalPlaces` says how to scale.
+public struct ExtraUsage: Decodable, Sendable, Equatable {
+    public let isEnabled: Bool?
+    public let monthlyLimit: Double?
+    public let usedCredits: Double?
+    public let utilization: Double?
+    public let currency: String?
+    public let decimalPlaces: Int?
+    public let disabledReason: String?
+    public let spendLimitReached: Bool?
+
+    public init(
+        isEnabled: Bool? = nil,
+        monthlyLimit: Double? = nil,
+        usedCredits: Double? = nil,
+        utilization: Double? = nil,
+        currency: String? = nil,
+        decimalPlaces: Int? = nil,
+        disabledReason: String? = nil,
+        spendLimitReached: Bool? = nil
+    ) {
+        self.isEnabled = isEnabled
+        self.monthlyLimit = monthlyLimit
+        self.usedCredits = usedCredits
+        self.utilization = utilization
+        self.currency = currency
+        self.decimalPlaces = decimalPlaces
+        self.disabledReason = disabledReason
+        self.spendLimitReached = spendLimitReached
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled = "is_enabled"
+        case monthlyLimit = "monthly_limit"
+        case usedCredits = "used_credits"
+        case utilization
+        case currency
+        case decimalPlaces = "decimal_places"
+        case disabledReason = "disabled_reason"
+        case spendLimitReached = "spend_limit_reached"
     }
 }
 

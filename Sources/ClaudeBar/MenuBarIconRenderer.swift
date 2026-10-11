@@ -130,6 +130,7 @@ struct MenuBarLabelView: View {
     let model: UsageViewModel
     let settings: AppSettings
     let celebrations: CelebrationController
+    let telemetry: TelemetryController
 
     var body: some View {
         let displayedLimit = menuBarLimit(
@@ -146,6 +147,7 @@ struct MenuBarLabelView: View {
         .onAppear {
             model.attachCelebrations(settings: settings, controller: celebrations)
             model.startPolling()
+            telemetry.attach(model: model, settings: settings)
         }
     }
 
