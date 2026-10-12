@@ -226,11 +226,27 @@ struct SettingsView: View {
         )
     }
 
+    /// Shown before the user starts a sign-in, because the consent screen names Claude Code
+    /// rather than ClaudeBar and that's alarming without warning.
+    private var signInDisclosure: some View {
+        Text("The browser will say **Claude Code** — Anthropic doesn't publish a third-party OAuth client for the usage endpoint, so ClaudeBar signs in as the CLI does. It asks for one permission, `\(OAuthConfig.scopes)`, and nothing else. Both tokens live in ClaudeBar's own Keychain item: the access token is only ever sent to the usage endpoint, the refresh token only to Anthropic's token and revoke endpoints.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
     @ViewBuilder
     private var signInControls: some View {
         switch login.phase {
-        case .signedOut:
+        // Both signed-out phases offer the same sign-in; the stale-scope one just explains
+        // first why the user is looking at it again.
+        case .signedOut, .signedOutStaleScope:
             Button("Sign in with Claude…") { login.startSignIn() }
+            if login.phase == .signedOutStaleScope {
+                Text("You were signed out: the earlier sign-in had asked for more access than ClaudeBar needs, including permission to create API keys for your organisation. That token has been deleted and ClaudeBar asked Anthropic to revoke it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            signInDisclosure
 
         case .awaitingCode:
             VStack(alignment: .leading, spacing: 8) {

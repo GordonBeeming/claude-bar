@@ -151,7 +151,9 @@ macOS gates that read behind a consent prompt. Click **Always Allow** and macOS 
 
 It works because ClaudeBar now holds its own token pair: refreshing rotates *its* refresh token, never Claude Code's, so the CLI stays logged in. That's the trap the obvious "just refresh the token ourselves" idea falls into — Anthropic's refresh tokens are single-use, so refreshing Claude Code's copy logs the CLI out (an unrelated menu bar app hit exactly that: [CodexBar #1161](https://github.com/steipete/CodexBar/issues/1161)). Doing our own login avoids it. If the self-contained token ever fails, ClaudeBar falls back to Claude Code's token, so the worst case is the prompt you already know.
 
-One caveat: sign-in reuses Claude Code's own OAuth client, since there's no public third-party OAuth for this endpoint. It's the same "act as Claude Code" posture as the `claude-code` User-Agent ClaudeBar already sends, and it could break if Anthropic changes the flow — the fallback keeps the app working if it does.
+The sign-in asks for one scope, `user:profile`, which is all the usage endpoint needs — verified against the live endpoints rather than assumed. Signing out deletes ClaudeBar's copy of the token and asks Anthropic to revoke the grant; the delete always happens, but if the revoke can't reach Anthropic the grant stays live until its refresh token expires.
+
+One caveat: sign-in reuses Claude Code's own OAuth client, since there's no public third-party OAuth for this endpoint. So the browser's consent screen says **Claude Code**, not ClaudeBar. It's the same "act as Claude Code" posture as the `claude-code` User-Agent ClaudeBar already sends, and it could break if Anthropic changes the flow — the fallback keeps the app working if it does.
 
 The default stays read-only and prompt-bearing; self-contained is opt-in.
 

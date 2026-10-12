@@ -13,6 +13,10 @@ import os
 final class OAuthLoginController {
     enum Phase: Equatable {
         case signedOut
+        /// Signed out on launch because the stored grant was wider than this build asks for
+        /// (or predated scope recording). Distinct from `signedOut` only so Settings can say
+        /// why, rather than the user finding themselves mysteriously logged out.
+        case signedOutStaleScope
         /// Browser opened; waiting for the user to paste the code.
         case awaitingCode
         case exchanging
@@ -30,9 +34,15 @@ final class OAuthLoginController {
     private let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "OAuthLogin")
 
     init() {
-        if let tokens = store.load() {
+        switch store.evaluate() {
+        case .usable(let tokens):
             phase = .signedIn(expiresAt: tokens.expiresAt)
-        } else {
+        case .clearedStaleScope(let storedScope):
+            phase = .signedOutStaleScope
+            logger.notice(
+                "cleared a stored grant with stale scope \(storedScope.isEmpty ? "<unrecorded>" : storedScope, privacy: .public)"
+            )
+        case .missing:
             phase = .signedOut
         }
     }
@@ -80,8 +90,17 @@ final class OAuthLoginController {
         }
     }
 
+    /// Reads and deletes on the spot, so the credential is gone the moment the user clicks;
+    /// only the revoke — a network round trip the UI shouldn't wait on — is detached, against
+    /// the token captured here. Doing the whole thing detached would let it re-read the
+    /// Keychain later and delete a credential a fresh sign-in had since saved.
     func signOut() {
+        let store = self.store
+        let tokens = store.load()
         store.clear()
+        if let refreshToken = tokens?.refreshToken {
+            Task.detached { await store.revokeGrant(refreshToken: refreshToken) }
+        }
         pending = nil
         phase = .signedOut
     }
