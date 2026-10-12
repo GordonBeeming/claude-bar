@@ -212,20 +212,24 @@ public struct TranscriptTokenScanner: Sendable {
 
     private static let usageMarker = Data("\"output_tokens\"".utf8)
 
+    /// The spec's model for usage the transcript doesn't attribute: the tokens were still
+    /// spent, so they count, and Bar UI shows them without pricing.
+    static let unknownModel = "unknown"
+
     static func parse(line: Data) -> TranscriptUsage? {
         // Most lines (user turns, tool results, metadata) carry no usage; skipping them
         // before JSON decoding keeps a large catch-up scan cheap.
         guard line.range(of: usageMarker) != nil else { return nil }
         guard let entry = try? JSONDecoder().decode(Line.self, from: line),
               let message = entry.message,
-              let usage = message.usage,
-              let model = message.model,
-              // Claude Code's locally generated stand-in messages (errors, interruptions)
-              // never reached the API.
-              model != "<synthetic>"
+              let usage = message.usage
         else {
             return nil
         }
+        let model = message.model ?? unknownModel
+        // Claude Code's locally generated stand-in messages (errors, interruptions) never
+        // reached the API.
+        guard model != "<synthetic>" else { return nil }
 
         let dedupeKey: String? = switch (message.id, entry.requestId) {
         case (nil, nil): nil

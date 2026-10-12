@@ -196,6 +196,14 @@ struct TranscriptTokenScannerTests {
         #expect(TranscriptTokenScanner.parse(line: Data("not json \"output_tokens\"".utf8)) == nil)
     }
 
+    @Test func usageWithoutAModelCountsAsUnknown() throws {
+        let line = #"{"requestId":"r","message":{"id":"m","usage":{"input_tokens":7,"output_tokens":3}}}"#
+        let usage = try #require(TranscriptTokenScanner.parse(line: Data(line.utf8)))
+        #expect(usage.model == "unknown")
+        #expect(usage.input == 7)
+        #expect(usage.output == 3)
+    }
+
     @Test func cacheWriteWithoutBreakdownCountsAsFiveMinute() throws {
         let line = #"{"requestId":"r","message":{"id":"m","model":"claude-haiku-5-5","usage":{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":50}}}"#
         let usage = try #require(TranscriptTokenScanner.parse(line: Data(line.utf8)))
@@ -461,12 +469,17 @@ struct TelemetryStampTests {
         }
     }
 
+    private func quantity(_ event: OTLP.LogRecord) -> OTLP.AnyValue? {
+        event.attributes.first { $0.key == "perk.quantity" }?.value
+    }
+
     @Test func guestPassRedeemedIsUsed() throws {
         let before = TelemetryStamp.observe(usage: nil, offers: passes(3), previous: ObservedState())
         let after = TelemetryStamp.observe(usage: nil, offers: passes(2), previous: before)
         let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first)
         #expect(event.eventName == "bar.perk.gone")
         #expect(reason(event) == "used")
+        #expect(quantity(event) == .int(1))
     }
 
     @Test func guestPassesWithdrawnHaveNoReason() throws {
@@ -476,12 +489,15 @@ struct TelemetryStampTests {
         #expect(event.eventName == "bar.perk.gone")
         #expect(event.attributes.contains(.init("perk.kind", .string("guest_pass"))))
         #expect(reason(event) == nil)
+        #expect(quantity(event) == .int(2))
     }
 
-    @Test func guestPassesAppear() {
+    @Test func guestPassesAppear() throws {
         let before = TelemetryStamp.observe(usage: nil, offers: passes(nil, eligible: false), previous: ObservedState())
         let after = TelemetryStamp.observe(usage: nil, offers: passes(3), previous: before)
-        #expect(TelemetryStamp.events(previous: before, current: after, now: now).map(\.eventName) == ["bar.perk.available"])
+        let events = TelemetryStamp.events(previous: before, current: after, now: now)
+        #expect(events.map(\.eventName) == ["bar.perk.available"])
+        #expect(quantity(try #require(events.first)) == .int(3))
     }
 
     private func grant(available: Bool, granted: Bool = false) -> AccountOffers {
@@ -501,12 +517,29 @@ struct TelemetryStampTests {
     @Test func creditGrantClaimedIsUsed() throws {
         let unclaimable = TelemetryStamp.observe(usage: nil, offers: grant(available: false), previous: ObservedState())
         let before = TelemetryStamp.observe(usage: nil, offers: grant(available: true), previous: unclaimable)
-        #expect(TelemetryStamp.events(previous: unclaimable, current: before, now: now).map(\.eventName) == ["bar.perk.available"])
+        let appeared = TelemetryStamp.events(previous: unclaimable, current: before, now: now)
+        #expect(appeared.map(\.eventName) == ["bar.perk.available"])
+        let available = try #require(appeared.first)
+        #expect(quantity(available) == .double(20))
+        #expect(available.attributes.contains(.init("perk.currency", .string("USD"))))
 
         let after = TelemetryStamp.observe(usage: nil, offers: grant(available: false, granted: true), previous: before)
         let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first)
         #expect(event.eventName == "bar.perk.gone")
         #expect(reason(event) == "used")
+        #expect(quantity(event) == .double(20))
+    }
+
+    @Test func creditGrantWithEmptyCurrencyHasNoQuantity() throws {
+        let offers = { (available: Bool) in
+            AccountOffers(creditGrant: CreditGrantStatus(campaign: "g", available: available, eligible: true, granted: false, amountMinorUnits: 2000, currency: ""))
+        }
+        let before = TelemetryStamp.observe(usage: nil, offers: offers(false), previous: ObservedState())
+        let after = TelemetryStamp.observe(usage: nil, offers: offers(true), previous: before)
+        let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first)
+        #expect(event.eventName == "bar.perk.available")
+        #expect(quantity(event) == nil)
+        #expect(!event.attributes.contains { $0.key == "perk.currency" })
     }
 
     @Test func creditGrantGoneWithoutBeingGrantedHasNoReason() throws {
