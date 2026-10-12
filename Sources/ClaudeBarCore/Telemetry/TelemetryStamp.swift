@@ -336,6 +336,7 @@ public enum TelemetryStamp {
         let was = availablePasses(before)
         let available = availablePasses(after)
         let attributes = guestPassAttributes(after) + [
+            .init("perk.quantity", .int(Int64(abs(available - was)))),
             .init("claude.previous_available", .int(Int64(was))),
             .init("claude.available", .int(Int64(available))),
         ]
@@ -376,8 +377,10 @@ public enum TelemetryStamp {
             .init("perk.kind", .string("credit_grant")),
             .init("claude.campaign", .string(merged.campaign)),
         ]
+        // A grant is claimed whole, so each event moves its full amount. Without a known amount
+        // the quantity is left out rather than letting Bar UI read the default 1 as a value.
         if let currency = merged.currency, let minor = merged.amountMinorUnits {
-            attributes.append(.init("claude.amount", .double(majorUnits(minor, currency: currency))))
+            attributes.append(.init("perk.quantity", .double(majorUnits(minor, currency: currency))))
         }
 
         if after.isClaimable && !before.isClaimable {

@@ -77,7 +77,7 @@ The format follows the [Bar Telemetry Spec](https://github.com/gordonbeeming/bar
 | `bar.limit.resets_at` | gauge, Unix seconds | When that limit's window ends |
 | `claude.usage.limit.window_elapsed` | gauge, % | How far through its window the limit is. Utilization above this means you're burning faster than an even pace |
 | `claude.extra_usage.enabled`, `.used_credits`, `.monthly_limit`, `.utilization` | gauge | Pay-as-you-go extra usage, as the API reports it (`currency`, `decimal_places` attributes) |
-| `bar.tokens` | cumulative sum | Tokens per `model` and `token.type`: `input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h` |
+| `bar.tokens` | cumulative sum | Tokens per `model` and `token.type`: `input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h`. A response the transcript doesn't name a model for still counts, under `unknown` |
 | `claude.code.messages` | cumulative sum | Model responses per `model` |
 | `claude.code.server_tool_requests` | cumulative sum | Web search and web fetch calls per `model` and `tool` |
 | `bar.perk.available` | gauge | Guest passes you can still hand out (`perk.kind` = `guest_pass`, a count), and a promotional credit waiting to be claimed (`credit_grant`, its value in `perk.currency`, so US$20.50 is `20.5`) |
@@ -94,7 +94,7 @@ The name is in each log record's `eventName` field.
 | `bar.tracking.started` | Counting started: telemetry was turned on, or back on after being off (`tracking.interval_minutes`) |
 | `bar.limit.reset` | A limit's window rolled over. Carries `limit.utilization.last`, the last usage seen before the reset, and `limit.resets_at.next` when the API gave the new window's end |
 | `bar.limit.appeared`, `bar.limit.disappeared` | A limit showed up in or dropped out of the API response (a new per-model limit, say) |
-| `bar.perk.available`, `bar.perk.gone` | Guest passes or a promotional credit became available, or went away |
+| `bar.perk.available`, `bar.perk.gone` | Guest passes or a promotional credit became available, or went away. `perk.quantity` says how much: the number of guest passes, or the credit's value in `perk.currency` |
 | `claude.limit.severity_changed` | A limit moved between normal, warning and critical |
 | `claude.extra_usage.enabled_changed` | Extra usage was switched on or off |
 
