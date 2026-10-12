@@ -208,11 +208,15 @@ public enum TelemetryStamp {
     public static func observe(usage: UsageResponse?, offers: AccountOffers, previous: ObservedState?) -> ObservedState {
         var observed = previous ?? ObservedState()
         if let usage {
+            // Limits sharing a `limit.id` are ambiguous too, even when their keys differ (same
+            // model ID, different display names): their events would be indistinguishable on
+            // the wire, and their metrics are already left out for the same reason.
+            let duplicateIDs = Set(Dictionary(grouping: usage.limits, by: limitID).filter { $0.value.count > 1 }.keys)
             let ambiguous = Set(
                 Dictionary(grouping: usage.limits, by: \.celebrationKey)
                     .filter { $0.value.count > 1 }
                     .keys
-            )
+            ).union(usage.limits.filter { duplicateIDs.contains(limitID($0)) }.map(\.celebrationKey))
             observed.ambiguousLimitKeys = ambiguous
             observed.limits = Dictionary(
                 usage.limits.filter { !ambiguous.contains($0.celebrationKey) }.map { limit in
@@ -313,14 +317,16 @@ public enum TelemetryStamp {
     }
 
     /// A window rolled over when the old one has ended and the API now reports a later end.
-    /// Without reset times on both sides, the usage-drop rule celebrations use is the best
-    /// signal left.
+    /// The usage-drop rule celebrations use also counts: it's the only signal without reset
+    /// times, and it still catches a rollover the timestamps hid (the API moving the end
+    /// forward before the old one passed leaves both stamps showing the same end).
     static func windowRolledOver(from old: ObservedState.Limit, to new: ObservedState.Limit, now: Date) -> Bool {
-        guard let oldEnd = old.resetsAt, let newEnd = new.resetsAt else {
-            return usageDidReset(from: old.percent, to: new.percent)
+        if let oldEnd = old.resetsAt, let newEnd = new.resetsAt,
+           newEnd.timeIntervalSince(oldEnd) > windowRolloverTolerance,
+           now.timeIntervalSince(oldEnd) >= -windowRolloverTolerance {
+            return true
         }
-        return newEnd.timeIntervalSince(oldEnd) > windowRolloverTolerance
-            && now.timeIntervalSince(oldEnd) >= -windowRolloverTolerance
+        return usageDidReset(from: old.percent, to: new.percent)
     }
 
     private static func guestPassEvents(before: GuestPassStatus?, after: GuestPassStatus?, now: Date) -> [OTLP.LogRecord] {

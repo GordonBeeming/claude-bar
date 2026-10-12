@@ -92,7 +92,7 @@ The name is in each log record's `eventName` field.
 | Event | When |
 |---|---|
 | `bar.tracking.started` | Counting started: telemetry was turned on, or back on after being off (`tracking.interval_minutes`) |
-| `bar.limit.reset` | A limit's window rolled over. Carries `limit.utilization.last`, the last usage seen before the reset, and `limit.resets_at.next` |
+| `bar.limit.reset` | A limit's window rolled over. Carries `limit.utilization.last`, the last usage seen before the reset, and `limit.resets_at.next` when the API gave the new window's end |
 | `bar.limit.appeared`, `bar.limit.disappeared` | A limit showed up in or dropped out of the API response (a new per-model limit, say) |
 | `bar.perk.available`, `bar.perk.gone` | Guest passes or a promotional credit became available, or went away |
 | `claude.limit.severity_changed` | A limit moved between normal, warning and critical |

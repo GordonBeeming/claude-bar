@@ -358,6 +358,45 @@ struct TelemetryStampTests {
         #expect(TelemetryStamp.events(previous: early, current: nudged, now: now).isEmpty)
     }
 
+    @Test func resetIsStillCaughtWhenTheEndMovedEarly() throws {
+        // The API moves the end forward while the old window is still running, then usage
+        // falls at the real rollover with the end unchanged.
+        let end = now.addingTimeInterval(7200)
+        let early = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [limit("session", group: "session", percent: 70, resetsAt: now.addingTimeInterval(3600))]),
+            offers: AccountOffers(), previous: nil
+        )
+        let moved = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [limit("session", group: "session", percent: 72, resetsAt: end)]),
+            offers: AccountOffers(), previous: early
+        )
+        #expect(TelemetryStamp.events(previous: early, current: moved, now: now).isEmpty)
+        let rolled = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [limit("session", group: "session", percent: 0, resetsAt: end)]),
+            offers: AccountOffers(), previous: moved
+        )
+        let reset = try #require(TelemetryStamp.events(previous: moved, current: rolled, now: now.addingTimeInterval(3700)).first)
+        #expect(reset.eventName == "bar.limit.reset")
+        #expect(reset.attributes.contains(.init("limit.utilization.last", .double(72))))
+    }
+
+    @Test func limitsSharingAnIDFireNoEvents() {
+        // Same model ID, different display names: distinct keys, one `limit.id` on the wire.
+        func scoped(_ name: String, _ percent: Double, severity: Severity = .normal) -> UsageLimit {
+            UsageLimit(kind: "weekly_scoped", group: "weekly", percent: percent, severity: severity,
+                       scope: LimitScope(model: .init(id: "claude-opus-4-1", displayName: name)))
+        }
+        let before = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [scoped("Opus", 90, severity: .critical), scoped("Opus 4.1", 5)]),
+            offers: AccountOffers(), previous: nil
+        )
+        let after = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [scoped("Opus", 0), scoped("Opus 4.1", 5)]),
+            offers: AccountOffers(), previous: before
+        )
+        #expect(TelemetryStamp.events(previous: before, current: after, now: now).isEmpty)
+    }
+
     @Test func limitEventsFromOldStateStillCarryALimitID() throws {
         // State saved by the previous version has no `limit.id` attribute.
         let key = ["weekly_scoped", "claude-opus-4-1", "Opus"].joined(separator: "\u{1}")
@@ -525,7 +564,19 @@ struct FileTelemetrySinkTests {
         #expect(FileManager.default.fileExists(atPath: legacy.path))
     }
 
-    @Test func fileDateIsUTCNotLocal() {
+    @Test func fileDateIsUTCNotLocal() throws {
+        // Pin a non-UTC local zone so a regression to local dates fails even on a UTC CI host.
+        // `TimeZone.current` ignores `NSTimeZone.default`; it follows `TZ` once the system zone
+        // is reset. No other test reads the process zone, so this can't disturb them.
+        let originalTZ = ProcessInfo.processInfo.environment["TZ"]
+        setenv("TZ", "Australia/Brisbane", 1)
+        NSTimeZone.resetSystemTimeZone()
+        defer {
+            if let originalTZ { setenv("TZ", originalTZ, 1) } else { unsetenv("TZ") }
+            NSTimeZone.resetSystemTimeZone()
+        }
+        try #require(TimeZone.current.identifier == "Australia/Brisbane")
+
         let sink = FileTelemetrySink(directory: URL(filePath: "/tmp"))
         // 23:30 UTC on 1 Jan is already 2 Jan in Brisbane; the file still says 1 Jan.
         let lateUTC = Date(timeIntervalSince1970: 1_767_310_200) // 2026-01-01T23:30:00Z
