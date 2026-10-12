@@ -530,6 +530,18 @@ struct TelemetryStampTests {
         #expect(quantity(event) == .double(20))
     }
 
+    @Test func creditGrantWithEmptyCurrencyHasNoQuantity() throws {
+        let offers = { (available: Bool) in
+            AccountOffers(creditGrant: CreditGrantStatus(campaign: "g", available: available, eligible: true, granted: false, amountMinorUnits: 2000, currency: ""))
+        }
+        let before = TelemetryStamp.observe(usage: nil, offers: offers(false), previous: ObservedState())
+        let after = TelemetryStamp.observe(usage: nil, offers: offers(true), previous: before)
+        let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first)
+        #expect(event.eventName == "bar.perk.available")
+        #expect(quantity(event) == nil)
+        #expect(!event.attributes.contains { $0.key == "perk.currency" })
+    }
+
     @Test func creditGrantGoneWithoutBeingGrantedHasNoReason() throws {
         // A usage drop alongside it is only a guess at redemption, so Bar UI decides instead.
         let resets = now.addingTimeInterval(86_400)

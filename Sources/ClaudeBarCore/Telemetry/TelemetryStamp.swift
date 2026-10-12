@@ -379,7 +379,7 @@ public enum TelemetryStamp {
         ]
         // A grant is claimed whole, so each event moves its full amount. Without a known amount
         // the quantity is left out rather than letting Bar UI read the default 1 as a value.
-        if let currency = merged.currency, let minor = merged.amountMinorUnits {
+        if let currency = merged.currency, !currency.isEmpty, let minor = merged.amountMinorUnits {
             attributes.append(.init("perk.quantity", .double(majorUnits(minor, currency: currency))))
         }
 
