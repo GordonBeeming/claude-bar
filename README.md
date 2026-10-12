@@ -60,41 +60,54 @@ Open **Settings…** from the dropdown:
 
 ClaudeBar can write your usage history to disk in OpenTelemetry's OTLP JSON format, so you can chart it with `jq` and a spreadsheet or feed it into any OpenTelemetry tool. It's opt-in. Nothing is written until you tick **Record usage history** in Settings, and ClaudeBar never uploads the files. The folder is yours, though: if it syncs (Documents does when iCloud Desktop & Documents is on), the files sync with it, so choose a local folder if you'd rather they stayed on this Mac.
 
-By default the files go to `~/Documents/ClaudeBar Telemetry`. You can choose another folder in Settings, along with how often to record (every 1, 5, 15, 30 or 60 minutes, default 5) and how long to keep files (7, 30, 90, 180 or 365 days, or forever; default 90). Each day gets two files:
+By default the files go to `~/Documents/ClaudeBar Telemetry`. You can choose another folder in Settings, along with how often to record (every 1, 5, 15, 30 or 60 minutes, default 5) and how long to keep files (7, 30, 90, 180 or 365 days, or forever; default 90). Each UTC day gets two files:
 
-- `metrics-YYYY-MM-DD.jsonl` holds one OTLP `ExportMetricsServiceRequest` per line, one line per recording.
-- `logs-YYYY-MM-DD.jsonl` holds one OTLP `ExportLogsServiceRequest` per line, written only when something changed.
+- `claudebar-metrics-YYYY-MM-DD.jsonl` holds one OTLP `ExportMetricsServiceRequest` per line, one line per recording.
+- `claudebar-logs-YYYY-MM-DD.jsonl` holds one OTLP `ExportLogsServiceRequest` per line, written only when something changed.
 
-Files older than the retention window are deleted. ClaudeBar only ever deletes files matching those two name patterns, so other files in the folder are left alone.
+The date in the name is the UTC date, so a file can start mid-morning or mid-evening your time. New files are created readable only by you (`0600`), and so is the folder if ClaudeBar creates it (`0700`). Files older than the retention window are deleted. ClaudeBar only ever deletes files matching those two name patterns, so anything else in the folder stays put. That includes the `metrics-*.jsonl` and `logs-*.jsonl` files older versions wrote; delete those yourself when you no longer want them.
+
+The format follows the [Bar Telemetry Spec](https://github.com/gordonbeeming/bar-ui/blob/main/docs/telemetry-spec.md) (v1), which [Bar UI](https://github.com/gordonbeeming/bar-ui) reads. Every record carries `bar.spec.version` = `"1"` as a resource attribute.
 
 ### Metrics
 
 | Metric | Type | What it is |
 |---|---|---|
-| `claude.usage.limit.utilization` | gauge, % | Each limit in the menu (session, weekly, per-model weekly, spend). Attributes: `limit.kind`, `limit.name`, `limit.group`, `model.id`/`model.name` for model-scoped limits, `severity`, `is_active` |
-| `claude.usage.limit.resets_at` | gauge, Unix seconds | When that limit's window ends |
+| `bar.limit.utilization` | gauge, % | Each limit in the menu (session, weekly, per-model weekly). Attributes: `limit.id` (the API's `kind`, plus `:<model>` for a per-model limit), `limit.name`, `limit.window.duration_minutes` when the window length is known, `model.id` when the API gives one, plus `limit.kind`, `limit.group` and `model.name` |
+| `bar.limit.resets_at` | gauge, Unix seconds | When that limit's window ends |
 | `claude.usage.limit.window_elapsed` | gauge, % | How far through its window the limit is. Utilization above this means you're burning faster than an even pace |
 | `claude.extra_usage.enabled`, `.used_credits`, `.monthly_limit`, `.utilization` | gauge | Pay-as-you-go extra usage, as the API reports it (`currency`, `decimal_places` attributes) |
-| `claude.code.tokens` | cumulative sum | Tokens per `model` and `token.type`: `input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h` |
+| `bar.tokens` | cumulative sum | Tokens per `model` and `token.type`: `input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h` |
 | `claude.code.messages` | cumulative sum | Model responses per `model` |
 | `claude.code.server_tool_requests` | cumulative sum | Web search and web fetch calls per `model` and `tool` |
-| `claude.guest_passes.available`, `.limit` | gauge | Claude Code guest passes you can still hand out, and how many you get in total |
-| `claude.credit_grant.available`, `.amount` | gauge | 1 while a promotional extra-usage credit is waiting to be claimed, and its value in minor units (cents) |
+| `bar.perk.available` | gauge | Guest passes you can still hand out (`perk.kind` = `guest_pass`, a count), and a promotional credit waiting to be claimed (`credit_grant`, its value in `perk.currency`, so US$20.50 is `20.5`) |
+| `claude.guest_passes.limit` | gauge | How many guest passes you get in total |
 
-Token counts come from Claude Code's transcripts in `~/.claude/projects`, because the usage API doesn't report tokens. That means they only cover Claude Code on this Mac. claude.ai, the desktop app and your other machines aren't included. Counting starts when you turn telemetry on rather than backfilling old transcripts. Turning it off and on again starts a new count, which OpenTelemetry tools see as a counter reset.
+Token counts come from Claude Code's transcripts in `~/.claude/projects`, because the usage API doesn't report tokens. That means they only cover Claude Code on this Mac. claude.ai, the desktop app and your other machines aren't included. Counting starts when you turn telemetry on rather than backfilling old transcripts. Turning it off and on again starts a new count with a new start time, which OpenTelemetry tools see as a counter reset.
 
 ### Events
 
-| Event (`event.name`) | When |
-|---|---|
-| `limit.reset` | A limit's usage dropped back as its window rolled over |
-| `limit.severity_changed` | A limit moved between normal, warning and critical |
-| `limit.appeared`, `limit.disappeared` | A limit showed up in or dropped out of the API response (a new per-model limit, say) |
-| `extra_usage.enabled_changed` | Extra usage was switched on or off |
-| `guest_pass.available`, `guest_pass.gone` | Guest passes became available, or one was redeemed or withdrawn |
-| `credit_grant.available`, `credit_grant.gone` | A promotional credit was offered, or stopped being offered |
+The name is in each log record's `eventName` field.
 
-The API doesn't say why an offer went away, so `gone` events carry an `inferred_reason`. A guest pass that's no longer counted was redeemed (`used`). If you stop being eligible for passes altogether, they're `expired`. A credit grant is `used` if the API marks it granted, or if your headroom jumped at the same moment: the extra-usage cap went up, or a limit's usage fell without its window resetting. Otherwise it's `expired`.
+| Event | When |
+|---|---|
+| `bar.tracking.started` | Counting started: telemetry was turned on, or back on after being off (`tracking.interval_minutes`) |
+| `bar.limit.reset` | A limit's window rolled over. Carries `limit.utilization.last`, the last usage seen before the reset, and `limit.resets_at.next` when the API gave the new window's end |
+| `bar.limit.appeared`, `bar.limit.disappeared` | A limit showed up in or dropped out of the API response (a new per-model limit, say) |
+| `bar.perk.available`, `bar.perk.gone` | Guest passes or a promotional credit became available, or went away |
+| `claude.limit.severity_changed` | A limit moved between normal, warning and critical |
+| `claude.extra_usage.enabled_changed` | Extra usage was switched on or off |
+
+The API doesn't say why a perk went away, so `bar.perk.gone` only carries `perk.gone.reason` = `used` when ClaudeBar can tell: the guest-pass count dropped while you're still eligible, or the API marks the credit as granted. In any other case the event has no reason attribute.
+
+### Changing settings from another app
+
+Another app can ask ClaudeBar to change its telemetry settings with a `claudebar://` link:
+
+- `claudebar://telemetry?enabled=1&interval=5&retention=0&folder=<percent-encoded path>` takes any of those parameters. `interval` is in minutes (1 to 1440) and `retention` in days (0 keeps files forever, otherwise 1 to 3650). ClaudeBar always shows you the change, old value then new, and only applies it when you click **Apply**. If any value is invalid, nothing changes and ClaudeBar tells you why.
+- `claudebar://settings` opens Settings.
+
+The settings live in ClaudeBar's defaults (`telemetryEnabled`, `telemetryIntervalMinutes`, `telemetryRetentionDays`, `telemetryDirectory`), so other apps can read the current values from there.
 
 Guest passes and credit grants come from the same account endpoints Claude Code uses for `/passes` and its promotions. They aren't a documented API, so if one stops answering, that part is skipped and everything else is still recorded. Your referral code and link are never written.
 

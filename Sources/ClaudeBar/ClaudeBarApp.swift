@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct ClaudeBarApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = UsageViewModel()
     @State private var settings = AppSettings()
     @State private var celebrations = CelebrationController()
@@ -20,7 +21,13 @@ struct ClaudeBarApp: App {
         MenuBarExtra {
             UsageMenuView(model: model, settings: settings)
         } label: {
-            MenuBarLabelView(model: model, settings: settings, celebrations: celebrations, telemetry: telemetry)
+            MenuBarLabelView(
+                model: model,
+                settings: settings,
+                celebrations: celebrations,
+                telemetry: telemetry,
+                router: appDelegate.router
+            )
         }
         .menuBarExtraStyle(.window)
 

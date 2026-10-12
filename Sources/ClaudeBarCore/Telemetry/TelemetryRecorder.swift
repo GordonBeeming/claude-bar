@@ -4,6 +4,21 @@ import Foundation
 struct TelemetryState: Codable, Sendable, Equatable {
     var scan: TranscriptScanState?
     var observed: ObservedState?
+    /// When counting last (re)started, until a stamp has written `bar.tracking.started` for it.
+    var trackingStartPending: Date?
+    /// The spec version this state was written under. Missing in state saved before the Bar
+    /// Telemetry Spec, which is how an upgraded install is told apart from a new one.
+    var specVersion: String? = TelemetryStamp.specVersion
+
+    /// State from before the spec was counting already but never wrote the start event Bar UI
+    /// needs, so one is owed for the count's original start time.
+    mutating func migrateFromBeforeSpec() {
+        guard specVersion == nil else { return }
+        if let scan, trackingStartPending == nil {
+            trackingStartPending = scan.countingSince
+        }
+        specVersion = TelemetryStamp.specVersion
+    }
 }
 
 /// What a stamp did, for the app to log. Failures are collected rather than thrown so one
@@ -42,6 +57,7 @@ public actor TelemetryRecorder {
         offers: AccountOffers,
         sinks: [any TelemetrySink],
         retentionDays: Int?,
+        intervalMinutes: Int,
         now: Date
     ) -> TelemetryStampReport {
         var report = TelemetryStampReport()
@@ -56,13 +72,17 @@ public actor TelemetryRecorder {
                 state.scan = scan
             } else {
                 state.scan = try scanner.baseline(now: now)
+                state.trackingStartPending = now
             }
         } catch {
             report.problems.append("transcript scan failed: \(error.localizedDescription)")
         }
 
         let observed = TelemetryStamp.observe(usage: usage, offers: offers, previous: state.observed)
-        let events = TelemetryStamp.events(previous: state.observed, current: observed, now: now)
+        var events = TelemetryStamp.events(previous: state.observed, current: observed, now: now)
+        if let started = state.trackingStartPending {
+            events.insert(TelemetryStamp.trackingStarted(now: started, intervalMinutes: intervalMinutes), at: 0)
+        }
         // Offers that couldn't be fetched this time fall back to the last-known values, so
         // their gauges keep a continuous line instead of gapping on a transient failure.
         let metrics = TelemetryStamp.metrics(usage: usage, offers: observed.offers, tokens: state.scan, now: now)
@@ -95,6 +115,7 @@ public actor TelemetryRecorder {
             report.eventNames = []
         } else {
             state.observed = observed
+            state.trackingStartPending = nil
         }
 
         self.state = state
@@ -115,6 +136,7 @@ public actor TelemetryRecorder {
         guard state.scan == nil else { return report.problems }
         do {
             state.scan = try scanner.baseline(now: now)
+            state.trackingStartPending = now
         } catch {
             report.problems.append("transcript baseline failed: \(error.localizedDescription)")
             return report.problems
@@ -145,7 +167,9 @@ public actor TelemetryRecorder {
             let data = try Data(contentsOf: stateURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .secondsSince1970
-            return try decoder.decode(TelemetryState.self, from: data)
+            var decoded = try decoder.decode(TelemetryState.self, from: data)
+            decoded.migrateFromBeforeSpec()
+            return decoded
         } catch {
             // Starting over costs one baseline; refusing to stamp would cost all of it.
             report.problems.append("state unreadable, starting a new baseline: \(error.localizedDescription)")

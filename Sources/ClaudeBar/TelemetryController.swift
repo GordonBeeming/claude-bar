@@ -38,6 +38,7 @@ final class TelemetryController {
                 .init("service.version", .string(version)),
                 .init("host.name", .string(ProcessInfo.processInfo.hostName)),
                 .init("os.type", .string("darwin")),
+                .init("bar.spec.version", .string(TelemetryStamp.specVersion)),
             ]),
             scope: OTLP.Scope(name: "com.gordonbeeming.ClaudeBar.telemetry", version: version)
         )
@@ -160,6 +161,7 @@ final class TelemetryController {
             offers: lastOffers,
             sinks: makeSinks(config.sinks),
             retentionDays: config.retentionDays,
+            intervalMinutes: Int((config.intervalSeconds / 60).rounded()),
             now: now
         )
         logger.notice("""

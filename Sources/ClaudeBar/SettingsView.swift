@@ -102,13 +102,19 @@ struct SettingsView: View {
 
                 if settings.telemetryEnabled {
                     Picker("Every", selection: $settings.telemetryIntervalMinutes) {
-                        ForEach(AppSettings.telemetryIntervalChoices, id: \.self) { minutes in
-                            Text(minutes == 1 ? "1 minute" : "\(minutes) minutes").tag(minutes)
+                        ForEach(
+                            withCurrent(settings.telemetryIntervalMinutes, in: AppSettings.telemetryIntervalChoices),
+                            id: \.self
+                        ) { minutes in
+                            Text(intervalLabel(minutes)).tag(minutes)
                         }
                     }
 
                     Picker("Keep", selection: $settings.telemetryRetentionDays) {
-                        ForEach(AppSettings.telemetryRetentionChoices, id: \.self) { days in
+                        ForEach(
+                            withCurrent(settings.telemetryRetentionDays, in: AppSettings.telemetryRetentionChoices),
+                            id: \.self
+                        ) { days in
                             Text(retentionLabel(days)).tag(days)
                         }
                     }
@@ -156,9 +162,24 @@ struct SettingsView: View {
         (url.path as NSString).abbreviatingWithTildeInPath
     }
 
+    /// The presets, plus the current value when it isn't one (set through `claudebar://`), so
+    /// the picker always shows what's actually in effect.
+    private func withCurrent(_ current: Int, in presets: [Int]) -> [Int] {
+        guard !presets.contains(current) else { return presets }
+        // Forever (0) sorts last in the retention presets, so slot a custom value in before it.
+        let forever = presets.last == AppSettings.telemetryRetentionForever ? [AppSettings.telemetryRetentionForever] : []
+        let finite = presets.filter { forever.isEmpty || $0 != AppSettings.telemetryRetentionForever }
+        return (finite + [current]).sorted() + forever
+    }
+
+    private func intervalLabel(_ minutes: Int) -> String {
+        minutes == 1 ? "1 minute" : "\(minutes) minutes"
+    }
+
     private func retentionLabel(_ days: Int) -> String {
         switch days {
         case AppSettings.telemetryRetentionForever: "Forever"
+        case 1: "1 day"
         case 365: "1 year"
         default: "\(days) days"
         }
@@ -182,7 +203,7 @@ struct SettingsView: View {
         do {
             // The folder is only created by the first stamp; make it now so Finder has
             // something to open straight after switching telemetry on.
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try FileTelemetrySink.createFolderIfNeeded(url)
             telemetryFolderError = nil
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {

@@ -131,6 +131,10 @@ struct MenuBarLabelView: View {
     let settings: AppSettings
     let celebrations: CelebrationController
     let telemetry: TelemetryController
+    let router: URLRouter
+    // The label is the one view that exists for the app's whole life, so it's where the
+    // URL router borrows SwiftUI's Settings-window action from.
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         let displayedLimit = menuBarLimit(
@@ -148,6 +152,8 @@ struct MenuBarLabelView: View {
             model.attachCelebrations(settings: settings, controller: celebrations)
             model.startPolling()
             telemetry.attach(model: model, settings: settings)
+            let openSettings = openSettings
+            router.attach(settings: settings, openSettings: { openSettings() })
         }
     }
 
