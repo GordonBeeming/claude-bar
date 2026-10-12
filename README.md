@@ -65,7 +65,7 @@ By default the files go to `~/Documents/ClaudeBar Telemetry`. You can choose ano
 - `claudebar-metrics-YYYY-MM-DD.jsonl` holds one OTLP `ExportMetricsServiceRequest` per line, one line per recording.
 - `claudebar-logs-YYYY-MM-DD.jsonl` holds one OTLP `ExportLogsServiceRequest` per line, written only when something changed.
 
-The date in the name is the UTC date, so a file can start mid-morning or mid-evening your time. New files are created readable only by you (`0600`), and so is the folder if ClaudeBar creates it. Files older than the retention window are deleted. ClaudeBar only ever deletes files matching those two name patterns, so anything else in the folder stays put. That includes the `metrics-*.jsonl` and `logs-*.jsonl` files older versions wrote; delete those yourself when you no longer want them.
+The date in the name is the UTC date, so a file can start mid-morning or mid-evening your time. New files are created readable only by you (`0600`), and so is the folder if ClaudeBar creates it (`0700`). Files older than the retention window are deleted. ClaudeBar only ever deletes files matching those two name patterns, so anything else in the folder stays put. That includes the `metrics-*.jsonl` and `logs-*.jsonl` files older versions wrote; delete those yourself when you no longer want them.
 
 The format follows the [Bar Telemetry Spec](https://github.com/gordonbeeming/bar-ui/blob/main/docs/telemetry-spec.md) (v1), which [Bar UI](https://github.com/gordonbeeming/bar-ui) reads. Every record carries `bar.spec.version` = `"1"` as a resource attribute.
 

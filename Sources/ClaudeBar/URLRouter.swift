@@ -44,7 +44,8 @@ final class URLRouter {
         do {
             request = try ClaudeBarURLRequest.parse(url)
         } catch {
-            logger.notice("rejected claudebar URL: \(error.localizedDescription, privacy: .public)")
+            // The reason can quote a rejected folder path, which can name a person or project.
+            logger.notice("rejected claudebar URL: \(error.localizedDescription, privacy: .private)")
             showRejection(error.localizedDescription)
             return
         }
@@ -128,6 +129,6 @@ final class URLRouter {
     }
 
     private static func path(_ url: URL) -> String {
-        (url.path as NSString).abbreviatingWithTildeInPath
+        ClaudeBarURLRequest.displayPath(url)
     }
 }

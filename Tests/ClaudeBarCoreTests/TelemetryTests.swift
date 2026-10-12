@@ -601,6 +601,18 @@ struct FileTelemetrySinkTests {
         #expect(fileMode == 0o600)
     }
 
+    @Test func folderHelperOnlySetsPermissionsOnFoldersItCreates() throws {
+        let base = try temporaryDirectory()
+        let created = base.appending(path: "new", directoryHint: .isDirectory)
+        try FileTelemetrySink.createFolderIfNeeded(created)
+        #expect(try FileManager.default.attributesOfItem(atPath: created.path)[.posixPermissions] as? Int == 0o700)
+
+        let existing = base.appending(path: "picked", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: existing, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        try FileTelemetrySink.createFolderIfNeeded(existing)
+        #expect(try FileManager.default.attributesOfItem(atPath: existing.path)[.posixPermissions] as? Int == 0o755)
+    }
+
     @Test func partialLastLineIsCutBeforeAppending() throws {
         let directory = try temporaryDirectory()
         let sink = FileTelemetrySink(directory: directory)
@@ -737,6 +749,40 @@ struct TelemetryRecorderTests {
         )
         #expect(retried.problems.isEmpty)
         #expect(retried.eventNames == ["bar.limit.reset"])
+    }
+
+    @Test func upgradedStateWritesOneStartEventAtItsOriginalStart() async throws {
+        let base = try temporaryDirectory()
+        let output = base.appending(path: "out", directoryHint: .isDirectory)
+        let stateURL = base.appending(path: "state/telemetry-state.json")
+        let scanner = TranscriptTokenScanner(root: base.appending(path: "projects", directoryHint: .isDirectory))
+        func makeRecorder() -> TelemetryRecorder {
+            TelemetryRecorder(stateURL: stateURL, scanner: scanner, resource: .init(attributes: []), scope: .init(name: "t", version: "1"))
+        }
+        let countingSince = Date(timeIntervalSince1970: 1_790_000_000)
+        #expect(await makeRecorder().startCounting(now: countingSince).isEmpty)
+
+        // Strip what this version adds, leaving the state an install from before the spec saved.
+        var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any])
+        json.removeValue(forKey: "specVersion")
+        json.removeValue(forKey: "trackingStartPending")
+        try JSONSerialization.data(withJSONObject: json).write(to: stateURL)
+
+        let recorder = makeRecorder()
+        let now = countingSince.addingTimeInterval(86_400)
+        let first = await recorder.stamp(
+            usage: nil, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)],
+            retentionDays: 90, intervalMinutes: 5, now: now
+        )
+        #expect(first.eventNames == ["bar.tracking.started"])
+        let logs = try String(contentsOf: output.appending(path: FileTelemetrySink(directory: output).fileName(kind: "logs", on: now)), encoding: .utf8)
+        #expect(logs.contains("\"timeUnixNano\":\"1790000000000000000\""))
+
+        let second = await recorder.stamp(
+            usage: nil, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)],
+            retentionDays: 90, intervalMinutes: 5, now: now.addingTimeInterval(300)
+        )
+        #expect(second.eventNames.isEmpty)
     }
 
     @Test func tokensWrittenBeforeTheFirstStampStillCount() async throws {

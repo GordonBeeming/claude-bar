@@ -60,6 +60,9 @@ struct ClaudeBarURLRequestTests {
         ("claudebar://telemetry?retention=3651", "retention"),
         ("claudebar://telemetry?folder=relative%2Fpath", "folder"),
         ("claudebar://telemetry?folder=", "folder"),
+        // A line break could pose as another line in the confirmation.
+        ("claudebar://telemetry?folder=%2Ftmp%2Fhistory%0ATracking:%20Off%20%E2%86%92%20On", "folder"),
+        ("claudebar://telemetry?folder=%2Ftmp%2Fa%09b", "folder"),
     ])
     func invalidValueRejectsTheWholeRequest(url: String, parameter: String) throws {
         // A valid parameter alongside doesn't rescue the request.
@@ -70,6 +73,14 @@ struct ClaudeBarURLRequestTests {
         }
         #expect(rejected == parameter)
         #expect(error?.errorDescription?.isEmpty == false)
+    }
+
+    @Test func displayPathKeepsControlCharactersOnOneLine() {
+        let url = URL(filePath: "/tmp/history\nTracking: Off → On")
+        let shown = ClaudeBarURLRequest.displayPath(url)
+        #expect(!shown.contains("\n"))
+        #expect(shown == "/tmp/history\\u{000A}Tracking: Off → On")
+        #expect(ClaudeBarURLRequest.displayPath(URL(filePath: "/tmp/plain")) == "/tmp/plain")
     }
 
     @Test func unknownActionAndSchemeAreRejected() throws {

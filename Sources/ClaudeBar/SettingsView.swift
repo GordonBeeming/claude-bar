@@ -203,7 +203,7 @@ struct SettingsView: View {
         do {
             // The folder is only created by the first stamp; make it now so Finder has
             // something to open straight after switching telemetry on.
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try FileTelemetrySink.createFolderIfNeeded(url)
             telemetryFolderError = nil
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {

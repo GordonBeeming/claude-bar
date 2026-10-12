@@ -46,6 +46,18 @@ public enum ClaudeBarURLRequest: Equatable, Sendable {
         }
     }
 
+    /// A folder path for the confirmation, `~`-abbreviated, with control characters shown
+    /// escaped so a path can never break onto a second line and pass itself off as another
+    /// change. Applied to the current folder too, which came from defaults anyone can write.
+    public static func displayPath(_ url: URL) -> String {
+        let path = (url.path as NSString).abbreviatingWithTildeInPath
+        return path.unicodeScalars.map { scalar in
+            CharacterSet.controlCharacters.contains(scalar)
+                ? String(format: "\\u{%04X}", scalar.value)
+                : String(scalar)
+        }.joined()
+    }
+
     public static func parse(_ url: URL) throws(ParseError) -> ClaudeBarURLRequest {
         guard url.scheme?.lowercased() == scheme else { throw .wrongScheme(url.scheme) }
         // `claudebar://telemetry` puts the action in the host; `claudebar:telemetry` in the path.
@@ -96,8 +108,14 @@ public enum ClaudeBarURLRequest: Equatable, Sendable {
             case "folder":
                 // URLComponents has already percent-decoded the value.
                 let path = (value as NSString).expandingTildeInPath
-                guard path.hasPrefix("/") else {
-                    throw .invalidValue(parameter: "folder", value: value, expected: "an absolute path")
+                // A line break in the path could pose as another line in the confirmation, and
+                // no real folder a person would pick contains one.
+                guard path.hasPrefix("/"), path.rangeOfCharacter(from: .controlCharacters) == nil else {
+                    throw .invalidValue(
+                        parameter: "folder",
+                        value: value.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.map(String.init).joined(),
+                        expected: "an absolute path without line breaks or control characters"
+                    )
                 }
                 change.folder = URL(filePath: path, directoryHint: .isDirectory).standardizedFileURL
             default:

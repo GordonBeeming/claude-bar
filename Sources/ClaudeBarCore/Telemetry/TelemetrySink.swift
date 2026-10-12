@@ -129,17 +129,23 @@ public struct FileTelemetrySink: TelemetrySink {
         return formatter
     }
 
+    /// Creates the telemetry folder readable only by its owner, if it doesn't exist yet. Every
+    /// place that might create it goes through here, so it's private whichever gets there first.
+    /// Permissions are only set on a folder created here; a folder the person picked (Documents
+    /// itself, say) keeps whatever permissions they gave it.
+    public static func createFolderIfNeeded(_ directory: URL) throws {
+        let fileManager = FileManager.default
+        guard !fileManager.fileExists(atPath: directory.path) else { return }
+        try fileManager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+    }
+
     private func append(_ line: Data, to kind: String, on date: Date) throws {
         let fileManager = FileManager.default
-        if !fileManager.fileExists(atPath: directory.path) {
-            // Permissions are only set on a folder this sink creates; a folder the person picked
-            // (Documents itself, say) keeps whatever permissions they gave it.
-            try fileManager.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-        }
+        try Self.createFolderIfNeeded(directory)
         let url = directory.appending(path: fileName(kind: kind, on: date))
         if !fileManager.fileExists(atPath: url.path) {
             guard fileManager.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
