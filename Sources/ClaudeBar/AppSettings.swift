@@ -246,14 +246,14 @@ final class AppSettings {
             .flatMap(CredentialSource.init(rawValue:)) ?? .claudeCode
 
         telemetryEnabled = defaults.bool(forKey: Keys.telemetryEnabled)
+        // Any in-range value is kept, not just the pickers' presets: Bar UI can ask for one
+        // through the URL scheme, and it reads these keys back expecting what it asked for.
         let storedInterval = defaults.integer(forKey: Keys.telemetryIntervalMinutes)
-        // Snap a hand-edited interval onto the menu's choices so the picker always has a selection.
-        telemetryIntervalMinutes = Self.telemetryIntervalChoices.contains(storedInterval)
+        telemetryIntervalMinutes = TelemetryConfig.intervalMinutesRange.contains(storedInterval)
             ? storedInterval
             : Int(TelemetryConfig.defaultIntervalSeconds / 60)
         let storedRetention = defaults.integer(forKey: Keys.telemetryRetentionDays)
-        // Snap a hand-edited value onto the menu's choices so the picker always has a selection.
-        telemetryRetentionDays = Self.telemetryRetentionChoices.contains(storedRetention)
+        telemetryRetentionDays = TelemetryConfig.retentionDaysRange.contains(storedRetention)
             ? storedRetention
             : TelemetryConfig.defaultRetentionDays
         let storedDirectory = defaults.string(forKey: Keys.telemetryDirectory) ?? ""

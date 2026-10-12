@@ -193,7 +193,7 @@ public enum OTLP {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case timeUnixNano, observedTimeUnixNano, severityNumber, severityText, body, attributes
+            case timeUnixNano, observedTimeUnixNano, severityNumber, severityText, eventName, body, attributes
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -204,10 +204,10 @@ public enum OTLP {
             // SEVERITY_NUMBER_INFO: these are state changes, never failures.
             try container.encode(9, forKey: .severityNumber)
             try container.encode("INFO", forKey: .severityText)
+            // The Bar Telemetry Spec reads the name from this field only, never an attribute.
+            try container.encode(eventName, forKey: .eventName)
             try container.encode(AnyValue.string(body), forKey: .body)
-            // `event.name` as an attribute rather than the newer top-level `eventName` field,
-            // so older Collector builds that predate that field still read the record whole.
-            try container.encode([KeyValue("event.name", .string(eventName))] + attributes, forKey: .attributes)
+            try container.encode(attributes, forKey: .attributes)
         }
     }
 

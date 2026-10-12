@@ -84,7 +84,7 @@ struct OTLPEncodingTests {
         #expect((sumAttribute["value"] as? [String: Any])?["intValue"] as? String == "7")
     }
 
-    @Test func logRecordCarriesEventNameAsAttribute() throws {
+    @Test func logRecordCarriesEventNameAtTopLevelOnly() throws {
         let request = OTLP.LogsRequest(resource: resource, scope: scope, logRecords: [
             .init(time: Date(timeIntervalSince1970: 1), eventName: "limit.reset", body: "Session reset", attributes: [.init("percent", .double(0))]),
         ])
@@ -94,9 +94,10 @@ struct OTLPEncodingTests {
         let record = try #require((scopeLogs.first?["logRecords"] as? [[String: Any]])?.first)
         #expect(record["severityNumber"] as? Int == 9)
         #expect((record["body"] as? [String: Any])?["stringValue"] as? String == "Session reset")
+        #expect(record["eventName"] as? String == "limit.reset")
+        #expect(record["timeUnixNano"] as? String == record["observedTimeUnixNano"] as? String)
         let attributes = try #require(record["attributes"] as? [[String: Any]])
-        #expect(attributes.first?["key"] as? String == "event.name")
-        #expect((attributes.first?["value"] as? [String: Any])?["stringValue"] as? String == "limit.reset")
+        #expect(attributes.map { $0["key"] as? String } == ["percent"])
     }
 }
 
@@ -214,15 +215,80 @@ struct TelemetryStampTests {
             limit("weekly_scoped", group: "weekly", percent: 27, model: "Fable"),
         ])
         let metrics = TelemetryStamp.metrics(usage: usage, offers: AccountOffers(), tokens: nil, now: now)
-        let utilization = try #require(metrics.first { $0.name == "claude.usage.limit.utilization" })
+        let utilization = try #require(metrics.first { $0.name == "bar.limit.utilization" })
         #expect(utilization.dataPoints.count == 2)
         let scoped = try #require(utilization.dataPoints.first { point in point.attributes.contains(.init("model.name", .string("Fable"))) })
         #expect(scoped.value == .double(27))
         #expect(scoped.attributes.contains(.init("limit.kind", .string("weekly_scoped"))))
+        // No model ID from the API, so the display name keeps it apart from other scoped limits.
+        #expect(scoped.attributes.contains(.init("limit.id", .string("weekly_scoped:Fable"))))
+        #expect(scoped.attributes.contains(.init("limit.window.duration_minutes", .int(10080))))
+        #expect(!scoped.attributes.contains { $0.key == "model.id" })
+
+        let session = try #require(utilization.dataPoints.first { $0.attributes.contains(.init("limit.id", .string("session"))) })
+        #expect(session.attributes.contains(.init("limit.name", .string("Session (5h)"))))
+        #expect(session.attributes.contains(.init("limit.window.duration_minutes", .int(300))))
 
         // Only the session limit has a reset time; the scoped one contributes no point.
-        let resets = try #require(metrics.first { $0.name == "claude.usage.limit.resets_at" })
+        let resets = try #require(metrics.first { $0.name == "bar.limit.resets_at" })
         #expect(resets.dataPoints.count == 1)
+        #expect(resets.dataPoints.first?.value == .int(Int64(now.timeIntervalSince1970) + 3600))
+    }
+
+    @Test func scopedLimitIDUsesModelID() throws {
+        let usage = UsageResponse(limits: [
+            UsageLimit(kind: "weekly_scoped", group: "weekly", percent: 4, severity: .normal,
+                       scope: LimitScope(model: .init(id: "claude-opus-4-1", displayName: "Opus"))),
+            // A group with no known cadence still gets written, just without a window length.
+            UsageLimit(kind: "monthly_all", group: "monthly", percent: 9, severity: .normal),
+        ])
+        let utilization = try #require(
+            TelemetryStamp.metrics(usage: usage, offers: AccountOffers(), tokens: nil, now: now).first { $0.name == "bar.limit.utilization" }
+        )
+        let scoped = try #require(utilization.dataPoints.first { $0.attributes.contains(.init("model.id", .string("claude-opus-4-1"))) })
+        #expect(scoped.attributes.contains(.init("limit.id", .string("weekly_scoped:claude-opus-4-1"))))
+        let monthly = try #require(utilization.dataPoints.first { $0.attributes.contains(.init("limit.id", .string("monthly_all"))) })
+        #expect(!monthly.attributes.contains { $0.key == "limit.window.duration_minutes" })
+    }
+
+    @Test func limitsSharingAnIDWriteNoBarPoints() throws {
+        let usage = UsageResponse(limits: [
+            limit("session", group: "session", percent: 3),
+            limit("weekly_scoped", group: "weekly", percent: 90),
+            limit("weekly_scoped", group: "weekly", percent: 5),
+        ])
+        let utilization = try #require(
+            TelemetryStamp.metrics(usage: usage, offers: AccountOffers(), tokens: nil, now: now).first { $0.name == "bar.limit.utilization" }
+        )
+        #expect(utilization.dataPoints.count == 1)
+    }
+
+    @Test func perksBecomeOneGaugeInMajorUnits() throws {
+        let offers = AccountOffers(
+            guestPasses: GuestPassStatus(campaign: "c", eligible: true, remaining: 2, limit: 3),
+            creditGrant: CreditGrantStatus(campaign: "g", available: true, eligible: true, granted: false, amountMinorUnits: 2050, currency: "usd")
+        )
+        let perks = try #require(
+            TelemetryStamp.metrics(usage: nil, offers: offers, tokens: nil, now: now).first { $0.name == "bar.perk.available" }
+        )
+        let pass = try #require(perks.dataPoints.first { $0.attributes.contains(.init("perk.kind", .string("guest_pass"))) })
+        #expect(pass.value == .int(2))
+        let grant = try #require(perks.dataPoints.first { $0.attributes.contains(.init("perk.kind", .string("credit_grant"))) })
+        #expect(grant.value == .double(20.5))
+        #expect(grant.attributes.contains(.init("perk.currency", .string("USD"))))
+    }
+
+    @Test func creditGrantWithoutCurrencyIsLeftOut() {
+        let offers = AccountOffers(creditGrant: CreditGrantStatus(campaign: "g", available: true, eligible: true, granted: false, amountMinorUnits: 2000))
+        let names = TelemetryStamp.metrics(usage: nil, offers: offers, tokens: nil, now: now).map(\.name)
+        #expect(!names.contains("bar.perk.available"))
+    }
+
+    @Test func currencyExponentFollowsISO4217() {
+        #expect(TelemetryStamp.currencyExponent("USD") == 2)
+        #expect(TelemetryStamp.currencyExponent("JPY") == 0)
+        #expect(TelemetryStamp.majorUnits(500, currency: "JPY") == 500)
+        #expect(TelemetryStamp.majorUnits(1234, currency: "AUD") == 12.34)
     }
 
     @Test func noUsageMeansNoLimitMetrics() {
@@ -252,9 +318,58 @@ struct TelemetryStampTests {
             offers: AccountOffers(),
             previous: before
         )
-        let names = TelemetryStamp.events(previous: before, current: after, now: now).map(\.eventName)
-        #expect(names.filter { $0 == "limit.reset" }.count == 1)
-        #expect(names.filter { $0 == "limit.severity_changed" }.count == 2)
+        let events = TelemetryStamp.events(previous: before, current: after, now: now)
+        let names = events.map(\.eventName)
+        // No reset times here, so the usage drop is what reads as a reset.
+        #expect(names.filter { $0 == "bar.limit.reset" }.count == 1)
+        #expect(names.filter { $0 == "claude.limit.severity_changed" }.count == 2)
+        let reset = events.first { $0.eventName == "bar.limit.reset" }
+        #expect(reset?.attributes.contains(.init("limit.utilization.last", .double(80))) == true)
+        #expect(reset?.attributes.contains(.init("limit.id", .string("session"))) == true)
+    }
+
+    @Test func resetIsTheWindowRollingOver() throws {
+        let oldEnd = now.addingTimeInterval(-30)
+        let newEnd = now.addingTimeInterval(5 * 3600)
+        let before = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [limit("session", group: "session", percent: 40, resetsAt: oldEnd)]),
+            offers: AccountOffers(), previous: nil
+        )
+        // Usage after the rollover is already above zero, which the usage-drop rule would miss.
+        let after = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [limit("session", group: "session", percent: 12, resetsAt: newEnd)]),
+            offers: AccountOffers(), previous: before
+        )
+        let reset = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first)
+        #expect(reset.eventName == "bar.limit.reset")
+        #expect(reset.attributes.contains(.init("limit.utilization.last", .double(40))))
+        #expect(reset.attributes.contains(.init("limit.resets_at.next", .int(Int64(newEnd.timeIntervalSince1970)))))
+        #expect(reset.attributes.contains(.init("limit.window.duration_minutes", .int(300))))
+
+        // The reset time moving while the old window is still running isn't a rollover.
+        let early = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [limit("session", group: "session", percent: 40, resetsAt: now.addingTimeInterval(3600))]),
+            offers: AccountOffers(), previous: nil
+        )
+        let nudged = TelemetryStamp.observe(
+            usage: UsageResponse(limits: [limit("session", group: "session", percent: 41, resetsAt: now.addingTimeInterval(7200))]),
+            offers: AccountOffers(), previous: early
+        )
+        #expect(TelemetryStamp.events(previous: early, current: nudged, now: now).isEmpty)
+    }
+
+    @Test func limitEventsFromOldStateStillCarryALimitID() throws {
+        // State saved by the previous version has no `limit.id` attribute.
+        let key = ["weekly_scoped", "claude-opus-4-1", "Opus"].joined(separator: "\u{1}")
+        let previous = ObservedState(limits: [
+            key: .init(percent: 5, severity: "normal", resetsAt: nil, attributes: ["limit.kind": "weekly_scoped", "limit.name": "Weekly — Opus", "limit.group": "weekly"]),
+        ])
+        let current = TelemetryStamp.observe(usage: UsageResponse(limits: []), offers: AccountOffers(), previous: previous)
+        let gone = try #require(TelemetryStamp.events(previous: previous, current: current, now: now).first)
+        #expect(gone.eventName == "bar.limit.disappeared")
+        #expect(gone.attributes.contains(.init("limit.id", .string("weekly_scoped:claude-opus-4-1"))))
+        #expect(gone.attributes.contains(.init("model.id", .string("claude-opus-4-1"))))
+        #expect(gone.attributes.contains(.init("limit.window.duration_minutes", .int(10080))))
     }
 
     @Test func newScopedLimitAppears() {
@@ -264,7 +379,7 @@ struct TelemetryStampTests {
             offers: AccountOffers(),
             previous: before
         )
-        #expect(TelemetryStamp.events(previous: before, current: after, now: now).map(\.eventName) == ["limit.appeared"])
+        #expect(TelemetryStamp.events(previous: before, current: after, now: now).map(\.eventName) == ["bar.limit.appeared"])
     }
 
     @Test func indistinguishableLimitsNeverFireEvents() {
@@ -302,7 +417,7 @@ struct TelemetryStampTests {
     }
 
     private func reason(_ event: OTLP.LogRecord) -> String? {
-        event.attributes.first { $0.key == "inferred_reason" }.flatMap {
+        event.attributes.first { $0.key == "perk.gone.reason" }.flatMap {
             if case .string(let value) = $0.value { value } else { nil }
         }
     }
@@ -311,22 +426,23 @@ struct TelemetryStampTests {
         let before = TelemetryStamp.observe(usage: nil, offers: passes(3), previous: ObservedState())
         let after = TelemetryStamp.observe(usage: nil, offers: passes(2), previous: before)
         let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first)
-        #expect(event.eventName == "guest_pass.gone")
+        #expect(event.eventName == "bar.perk.gone")
         #expect(reason(event) == "used")
     }
 
-    @Test func guestPassesWithdrawnAreExpired() throws {
+    @Test func guestPassesWithdrawnHaveNoReason() throws {
         let before = TelemetryStamp.observe(usage: nil, offers: passes(2), previous: ObservedState())
         let after = TelemetryStamp.observe(usage: nil, offers: passes(nil, eligible: false), previous: before)
         let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first)
-        #expect(event.eventName == "guest_pass.gone")
-        #expect(reason(event) == "expired")
+        #expect(event.eventName == "bar.perk.gone")
+        #expect(event.attributes.contains(.init("perk.kind", .string("guest_pass"))))
+        #expect(reason(event) == nil)
     }
 
     @Test func guestPassesAppear() {
         let before = TelemetryStamp.observe(usage: nil, offers: passes(nil, eligible: false), previous: ObservedState())
         let after = TelemetryStamp.observe(usage: nil, offers: passes(3), previous: before)
-        #expect(TelemetryStamp.events(previous: before, current: after, now: now).map(\.eventName) == ["guest_pass.available"])
+        #expect(TelemetryStamp.events(previous: before, current: after, now: now).map(\.eventName) == ["bar.perk.available"])
     }
 
     private func grant(available: Bool, granted: Bool = false) -> AccountOffers {
@@ -346,28 +462,23 @@ struct TelemetryStampTests {
     @Test func creditGrantClaimedIsUsed() throws {
         let unclaimable = TelemetryStamp.observe(usage: nil, offers: grant(available: false), previous: ObservedState())
         let before = TelemetryStamp.observe(usage: nil, offers: grant(available: true), previous: unclaimable)
-        #expect(TelemetryStamp.events(previous: unclaimable, current: before, now: now).map(\.eventName) == ["credit_grant.available"])
+        #expect(TelemetryStamp.events(previous: unclaimable, current: before, now: now).map(\.eventName) == ["bar.perk.available"])
 
         let after = TelemetryStamp.observe(usage: nil, offers: grant(available: false, granted: true), previous: before)
         let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first)
-        #expect(event.eventName == "credit_grant.gone")
+        #expect(event.eventName == "bar.perk.gone")
         #expect(reason(event) == "used")
     }
 
-    @Test func creditGrantGoneWithUsageDropIsUsed() throws {
+    @Test func creditGrantGoneWithoutBeingGrantedHasNoReason() throws {
+        // A usage drop alongside it is only a guess at redemption, so Bar UI decides instead.
         let resets = now.addingTimeInterval(86_400)
         let before = TelemetryStamp.observe(usage: UsageResponse(limits: [limit("weekly_all", group: "weekly", percent: 90, resetsAt: resets)]), offers: grant(available: true), previous: ObservedState())
         let after = TelemetryStamp.observe(usage: UsageResponse(limits: [limit("weekly_all", group: "weekly", percent: 60, resetsAt: resets)]), offers: grant(available: false), previous: before)
-        let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first { $0.eventName == "credit_grant.gone" })
-        #expect(reason(event) == "used")
-    }
-
-    @Test func creditGrantGoneWithSteadyUsageIsExpired() throws {
-        let resets = now.addingTimeInterval(86_400)
-        let before = TelemetryStamp.observe(usage: UsageResponse(limits: [limit("weekly_all", group: "weekly", percent: 50, resetsAt: resets)]), offers: grant(available: true), previous: ObservedState())
-        let after = TelemetryStamp.observe(usage: UsageResponse(limits: [limit("weekly_all", group: "weekly", percent: 52, resetsAt: resets)]), offers: grant(available: false), previous: before)
-        let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first { $0.eventName == "credit_grant.gone" })
-        #expect(reason(event) == "expired")
+        let event = try #require(TelemetryStamp.events(previous: before, current: after, now: now).first { $0.eventName == "bar.perk.gone" })
+        #expect(reason(event) == nil)
+        #expect(event.attributes.contains(.init("perk.kind", .string("credit_grant"))))
+        #expect(event.attributes.contains(.init("perk.currency", .string("USD"))))
     }
 
     @Test func failedOfferFetchKeepsLastKnownValue() {
@@ -393,20 +504,78 @@ struct FileTelemetrySinkTests {
         try sink.export(metrics: request, at: now)
         try sink.export(metrics: request, at: now)
 
-        let todayFile = directory.appending(path: FileTelemetrySink.fileName(prefix: "metrics", on: now))
+        let todayFile = directory.appending(path: sink.fileName(kind: "metrics", on: now))
+        #expect(todayFile.lastPathComponent.hasPrefix("claudebar-metrics-"))
         let lines = try String(contentsOf: todayFile, encoding: .utf8).split(separator: "\n")
         #expect(lines.count == 2)
 
         let old = Calendar.current.date(byAdding: .day, value: -100, to: now) ?? now
-        let oldFile = directory.appending(path: FileTelemetrySink.fileName(prefix: "logs", on: old))
+        let oldFile = directory.appending(path: sink.fileName(kind: "logs", on: old))
         let foreign = directory.appending(path: "notes.txt")
-        FileManager.default.createFile(atPath: oldFile.path, contents: Data())
-        FileManager.default.createFile(atPath: foreign.path, contents: Data())
+        // Files an older version named without the service prefix are the person's to clear.
+        let legacy = directory.appending(path: "metrics-2020-01-01.jsonl")
+        for file in [oldFile, foreign, legacy] {
+            FileManager.default.createFile(atPath: file.path, contents: Data())
+        }
 
         try sink.prune(retentionDays: 90, now: now)
         #expect(!FileManager.default.fileExists(atPath: oldFile.path))
         #expect(FileManager.default.fileExists(atPath: todayFile.path))
         #expect(FileManager.default.fileExists(atPath: foreign.path))
+        #expect(FileManager.default.fileExists(atPath: legacy.path))
+    }
+
+    @Test func fileDateIsUTCNotLocal() {
+        let sink = FileTelemetrySink(directory: URL(filePath: "/tmp"))
+        // 23:30 UTC on 1 Jan is already 2 Jan in Brisbane; the file still says 1 Jan.
+        let lateUTC = Date(timeIntervalSince1970: 1_767_310_200) // 2026-01-01T23:30:00Z
+        #expect(sink.fileName(kind: "logs", on: lateUTC) == "claudebar-logs-2026-01-01.jsonl")
+        #expect(sink.date(fromFileName: "claudebar-logs-2026-01-01.jsonl") == Date(timeIntervalSince1970: 1_767_225_600))
+        #expect(sink.date(fromFileName: "logs-2026-01-01.jsonl") == nil)
+        #expect(sink.date(fromFileName: "claudebar-logs-2026-01-01.jsonl.bak") == nil)
+    }
+
+    @Test func createsPrivateFolderAndFiles() throws {
+        let directory = try temporaryDirectory().appending(path: "new", directoryHint: .isDirectory)
+        let sink = FileTelemetrySink(directory: directory)
+        let now = Date()
+        try sink.export(logs: .init(resource: .init(attributes: []), scope: .init(name: "t", version: "1"), logRecords: [
+            .init(time: now, eventName: "e", body: "", attributes: []),
+        ]), at: now)
+        let folderMode = try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? Int
+        let fileMode = try FileManager.default.attributesOfItem(
+            atPath: directory.appending(path: sink.fileName(kind: "logs", on: now)).path
+        )[.posixPermissions] as? Int
+        #expect(folderMode == 0o700)
+        #expect(fileMode == 0o600)
+    }
+
+    @Test func partialLastLineIsCutBeforeAppending() throws {
+        let directory = try temporaryDirectory()
+        let sink = FileTelemetrySink(directory: directory)
+        let now = Date()
+        let file = directory.appending(path: sink.fileName(kind: "logs", on: now))
+        try Data("{\"whole\":1}\n{\"torn\":".utf8).write(to: file)
+
+        try sink.export(logs: .init(resource: .init(attributes: []), scope: .init(name: "t", version: "1"), logRecords: [
+            .init(time: now, eventName: "e", body: "", attributes: []),
+        ]), at: now)
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let lines = text.split(separator: "\n")
+        #expect(text.hasSuffix("\n"))
+        #expect(lines.count == 2)
+        #expect(lines[0] == "{\"whole\":1}")
+        #expect(lines[1].hasPrefix("{\"resourceLogs\""))
+    }
+
+    @Test func fileWithOnlyAFragmentStartsEmpty() throws {
+        let directory = try temporaryDirectory()
+        let file = directory.appending(path: "f.jsonl")
+        try Data("{\"torn\":".utf8).write(to: file)
+        let handle = try FileHandle(forUpdating: file)
+        try FileTelemetrySink.dropPartialLastLine(handle)
+        try handle.close()
+        #expect(try Data(contentsOf: file).isEmpty)
     }
 
     @Test func emptyLogBatchWritesNothing() throws {
@@ -441,32 +610,44 @@ struct TelemetryRecorderTests {
         let first = await recorder.stamp(
             usage: UsageResponse(limits: [limit("session", group: "session", percent: 70)]),
             offers: AccountOffers(),
-            sinks: sinks, retentionDays: 90, now: start
+            sinks: sinks, retentionDays: 90, intervalMinutes: 5, now: start
         )
         #expect(first.problems.isEmpty)
-        #expect(first.eventNames.isEmpty)
+        #expect(first.eventNames == ["bar.tracking.started"])
         #expect(FileManager.default.fileExists(atPath: stateURL.path))
+        let logsFile = output.appending(path: FileTelemetrySink(directory: output).fileName(kind: "logs", on: start))
+        let startedLine = try String(contentsOf: logsFile, encoding: .utf8)
+        #expect(startedLine.contains("\"eventName\":\"bar.tracking.started\""))
+        #expect(startedLine.contains("\"tracking.interval_minutes\""))
 
         try append(usageLine(id: "after", request: "r1") + "\n", to: transcript)
         let second = await recorder.stamp(
             usage: UsageResponse(limits: [limit("session", group: "session", percent: 0)]),
             offers: AccountOffers(),
-            sinks: sinks, retentionDays: 90, now: start.addingTimeInterval(300)
+            sinks: sinks, retentionDays: 90, intervalMinutes: 5, now: start.addingTimeInterval(300)
         )
         #expect(second.problems.isEmpty)
-        #expect(second.eventNames == ["limit.reset"])
+        #expect(second.eventNames == ["bar.limit.reset"])
 
-        let metricsFile = output.appending(path: FileTelemetrySink.fileName(prefix: "metrics", on: start))
+        let metricsFile = output.appending(path: FileTelemetrySink(directory: output).fileName(kind: "metrics", on: start))
         let lines = try String(contentsOf: metricsFile, encoding: .utf8).split(separator: "\n")
         #expect(lines.count == 2)
         // Only the message written after opting in is counted.
         let last = String(lines[1])
-        #expect(last.contains("\"claude.code.tokens\""))
+        #expect(last.contains("\"bar.tokens\""))
         #expect(last.contains("\"asInt\":\"20\""))
-        #expect(!String(lines[0]).contains("claude.code.tokens"))
+        #expect(!last.contains("claude.code.tokens"))
+        #expect(!String(lines[0]).contains("bar.tokens"))
 
         try await recorder.reset()
         #expect(!FileManager.default.fileExists(atPath: stateURL.path))
+
+        // Counting restarts after a reset, and says so again.
+        let restarted = await recorder.stamp(
+            usage: nil, offers: AccountOffers(),
+            sinks: sinks, retentionDays: 90, intervalMinutes: 15, now: start.addingTimeInterval(900)
+        )
+        #expect(restarted.eventNames == ["bar.tracking.started"])
     }
 
     private struct UnwritableSink: TelemetrySink {
@@ -488,23 +669,23 @@ struct TelemetryRecorderTests {
         let start = Date()
         _ = await recorder.stamp(
             usage: UsageResponse(limits: [limit("session", group: "session", percent: 70)]),
-            offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)], retentionDays: 90, now: start
+            offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)], retentionDays: 90, intervalMinutes: 5, now: start
         )
 
         let reset = UsageResponse(limits: [limit("session", group: "session", percent: 0)])
         let failed = await recorder.stamp(
-            usage: reset, offers: AccountOffers(), sinks: [UnwritableSink()], retentionDays: 90,
+            usage: reset, offers: AccountOffers(), sinks: [UnwritableSink()], retentionDays: 90, intervalMinutes: 5,
             now: start.addingTimeInterval(300)
         )
         #expect(!failed.problems.isEmpty)
         #expect(failed.eventNames.isEmpty)
 
         let retried = await recorder.stamp(
-            usage: reset, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)], retentionDays: 90,
+            usage: reset, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)], retentionDays: 90, intervalMinutes: 5,
             now: start.addingTimeInterval(600)
         )
         #expect(retried.problems.isEmpty)
-        #expect(retried.eventNames == ["limit.reset"])
+        #expect(retried.eventNames == ["bar.limit.reset"])
     }
 
     @Test func tokensWrittenBeforeTheFirstStampStillCount() async throws {
@@ -526,10 +707,10 @@ struct TelemetryRecorderTests {
         try append(usageLine(id: "waiting", request: "r1") + "\n", to: transcript)
         let output = base.appending(path: "out", directoryHint: .isDirectory)
         _ = await recorder.stamp(
-            usage: nil, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)], retentionDays: 90,
+            usage: nil, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: output)], retentionDays: 90, intervalMinutes: 5,
             now: start.addingTimeInterval(30)
         )
-        let metricsFile = output.appending(path: FileTelemetrySink.fileName(prefix: "metrics", on: start))
+        let metricsFile = output.appending(path: FileTelemetrySink(directory: output).fileName(kind: "metrics", on: start))
         let line = try String(contentsOf: metricsFile, encoding: .utf8)
         #expect(line.contains("\"claude.code.messages\""))
         #expect(line.contains("\"asInt\":\"1\""))
@@ -541,7 +722,7 @@ struct TelemetryRecorderTests {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let now = Date()
         let ancient = Calendar.current.date(byAdding: .day, value: -4000, to: now) ?? now
-        let oldFile = output.appending(path: FileTelemetrySink.fileName(prefix: "metrics", on: ancient))
+        let oldFile = output.appending(path: FileTelemetrySink(directory: output).fileName(kind: "metrics", on: ancient))
         FileManager.default.createFile(atPath: oldFile.path, contents: Data())
 
         let recorder = TelemetryRecorder(
@@ -553,7 +734,7 @@ struct TelemetryRecorderTests {
         let report = await recorder.stamp(
             usage: UsageResponse(limits: [limit("session", group: "session", percent: 10)]),
             offers: AccountOffers(),
-            sinks: [FileTelemetrySink(directory: output)], retentionDays: nil, now: now
+            sinks: [FileTelemetrySink(directory: output)], retentionDays: nil, intervalMinutes: 5, now: now
         )
         #expect(report.problems.isEmpty)
         #expect(FileManager.default.fileExists(atPath: oldFile.path))

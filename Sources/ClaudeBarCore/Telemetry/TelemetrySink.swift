@@ -9,6 +9,11 @@ public enum TelemetrySinkConfig: Sendable, Equatable {
 public struct TelemetryConfig: Sendable, Equatable {
     public static let defaultIntervalSeconds: TimeInterval = 300
     public static let defaultRetentionDays = 90
+    /// The ranges the Bar Telemetry Spec lets another app ask for, so settings and the URL
+    /// scheme agree on what's valid.
+    public static let intervalMinutesRange = 1...1440
+    /// 0 is "keep forever".
+    public static let retentionDaysRange = 0...3650
 
     /// Somewhere a person can find without knowing macOS's hidden app folders.
     public static var defaultDirectory: URL {
@@ -52,14 +57,19 @@ public func makeSinks(_ configs: [TelemetrySinkConfig]) -> [any TelemetrySink] {
     }
 }
 
-/// Appends OTLP JSON requests, one per line, to daily files:
-/// `metrics-YYYY-MM-DD.jsonl` and `logs-YYYY-MM-DD.jsonl`. That line-delimited layout is
-/// what the OpenTelemetry Collector's `otlpjsonfile` receiver reads, and `jq` handles it too.
+/// Appends OTLP JSON requests, one per line, to daily files named
+/// `<service>-metrics-YYYY-MM-DD.jsonl` and `<service>-logs-YYYY-MM-DD.jsonl`, the layout the
+/// Bar Telemetry Spec defines. It's also what the OpenTelemetry Collector's `otlpjsonfile`
+/// receiver reads, and `jq` handles it too.
 public struct FileTelemetrySink: TelemetrySink {
-    public let directory: URL
+    public static let defaultServiceName = "claudebar"
 
-    public init(directory: URL) {
+    public let directory: URL
+    public let serviceName: String
+
+    public init(directory: URL, serviceName: String = Self.defaultServiceName) {
         self.directory = directory
+        self.serviceName = serviceName
     }
 
     public func export(metrics: OTLP.MetricsRequest, at date: Date) throws {
@@ -74,48 +84,71 @@ public struct FileTelemetrySink: TelemetrySink {
     public func prune(retentionDays: Int, now: Date) throws {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: directory.path) else { return }
-        let calendar = Calendar.current
+        let calendar = Self.utcCalendar
         guard let cutoff = calendar.date(byAdding: .day, value: -retentionDays, to: calendar.startOfDay(for: now)) else {
             return
         }
         for name in try fileManager.contentsOfDirectory(atPath: directory.path) {
-            // Only ever touch files this sink named, so pointing the folder at a directory
-            // with other content can't cost the user anything.
-            guard let fileDate = Self.date(fromFileName: name), fileDate < cutoff else { continue }
+            // Only ever touch files named to this sink's pattern, so pointing the folder at a
+            // directory with other content, or files an older version named differently, can't
+            // cost the user anything.
+            guard let fileDate = date(fromFileName: name), fileDate < cutoff else { continue }
             try fileManager.removeItem(at: directory.appending(path: name))
         }
     }
 
-    static func fileName(prefix: String, on date: Date) -> String {
-        "\(prefix)-\(dayFormatter().string(from: date)).jsonl"
+    func fileName(kind: String, on date: Date) -> String {
+        "\(serviceName)-\(kind)-\(Self.dayFormatter().string(from: date)).jsonl"
     }
 
-    static func date(fromFileName name: String) -> Date? {
-        guard let match = name.wholeMatch(of: /(?:metrics|logs)-(\d{4}-\d{2}-\d{2})\.jsonl/) else { return nil }
-        return dayFormatter().date(from: String(match.1))
+    func date(fromFileName name: String) -> Date? {
+        let suffix = ".jsonl"
+        for kind in ["metrics", "logs"] {
+            let prefix = "\(serviceName)-\(kind)-"
+            guard name.hasPrefix(prefix), name.hasSuffix(suffix) else { continue }
+            let day = name.dropFirst(prefix.count).dropLast(suffix.count)
+            guard day.wholeMatch(of: /\d{4}-\d{2}-\d{2}/) != nil else { return nil }
+            return Self.dayFormatter().date(from: String(day))
+        }
+        return nil
     }
 
-    // Local calendar days, so a file lines up with the day the person was actually working.
+    // UTC days, so a reader in any time zone agrees on which file a moment landed in.
+    private static var utcCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        return calendar
+    }
+
     private static func dayFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = .current
+        formatter.calendar = utcCalendar
+        formatter.timeZone = .gmt
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }
 
-    private func append(_ line: Data, to prefix: String, on date: Date) throws {
+    private func append(_ line: Data, to kind: String, on date: Date) throws {
         let fileManager = FileManager.default
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appending(path: Self.fileName(prefix: prefix, on: date))
+        if !fileManager.fileExists(atPath: directory.path) {
+            // Permissions are only set on a folder this sink creates; a folder the person picked
+            // (Documents itself, say) keeps whatever permissions they gave it.
+            try fileManager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
+        let url = directory.appending(path: fileName(kind: kind, on: date))
         if !fileManager.fileExists(atPath: url.path) {
-            guard fileManager.createFile(atPath: url.path, contents: nil) else {
+            guard fileManager.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
                 throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
             }
         }
-        let handle = try FileHandle(forWritingTo: url)
+        let handle = try FileHandle(forUpdating: url)
         do {
+            try Self.dropPartialLastLine(handle)
             try handle.seekToEnd()
             try handle.write(contentsOf: line)
         } catch {
@@ -124,5 +157,28 @@ public struct FileTelemetrySink: TelemetrySink {
             throw error
         }
         try handle.close()
+    }
+
+    /// A crash mid-write can leave a line without its `\n`. Appending after it would glue the
+    /// next record onto the fragment and spoil both, so the fragment is cut off first.
+    static func dropPartialLastLine(_ handle: FileHandle) throws {
+        let size = try handle.seekToEnd()
+        guard size > 0 else { return }
+        try handle.seek(toOffset: size - 1)
+        guard let last = try handle.read(upToCount: 1), last.first != 0x0A else { return }
+
+        let chunk: UInt64 = 64 * 1024
+        var end = size
+        while end > 0 {
+            let start = end > chunk ? end - chunk : 0
+            try handle.seek(toOffset: start)
+            guard let data = try handle.read(upToCount: Int(end - start)), !data.isEmpty else { break }
+            if let newline = data.lastIndex(of: 0x0A) {
+                try handle.truncate(atOffset: start + UInt64(data.distance(from: data.startIndex, to: newline)) + 1)
+                return
+            }
+            end = start
+        }
+        try handle.truncate(atOffset: 0)
     }
 }
