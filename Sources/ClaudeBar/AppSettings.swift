@@ -1,6 +1,7 @@
 import ClaudeBarCore
 import Foundation
 import Observation
+import OSLog
 
 /// Where the usage token comes from. `claudeCode` (default) reads Claude Code's Keychain
 /// item; `selfContained` uses our own OAuth sign-in and only falls back to Claude Code's
@@ -74,6 +75,7 @@ final class AppSettings {
         static let telemetryIntervalMinutes = "telemetryIntervalMinutes"
         static let telemetryRetentionDays = "telemetryRetentionDays"
         static let telemetryDirectory = "telemetryDirectory"
+        static let telemetryFolderMigrated = "telemetryFolderMigrated"
 
         static func celebrationEnabled(_ trigger: CelebrationTrigger) -> String {
             "celebration.\(trigger.rawValue).enabled"
@@ -209,6 +211,33 @@ final class AppSettings {
         )
     }
 
+    /// Moves telemetry out of the old Documents default. The flag is set only once nothing
+    /// eligible remains there, so the Documents probe (which can raise a macOS prompt) stops
+    /// happening on every launch, while a file that failed to move is retried next time.
+    ///
+    /// Returns the folder to use. The old default stored as the choice (from "Use default" in an
+    /// earlier version) is cleared so the current default applies; a failed file is retried next
+    /// launch because the flag stays unset and the new default is then what's stored.
+    private static func migrateLegacyTelemetryFolder(selected: URL) -> URL {
+        let defaults = UserDefaults.standard
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let outcome = TelemetryFolderMigration.migrateIfNeeded(
+            selectedDirectory: selected,
+            home: home,
+            alreadyMigrated: defaults.bool(forKey: Keys.telemetryFolderMigrated)
+        )
+        if let outcome {
+            let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "Telemetry")
+            for failure in outcome.failures {
+                logger.error("telemetry folder move: \(failure, privacy: .private)")
+            }
+            if outcome.isComplete { defaults.set(true, forKey: Keys.telemetryFolderMigrated) }
+        }
+        guard TelemetryFolderMigration.isLegacyDefault(selected, home: home) else { return selected }
+        defaults.removeObject(forKey: Keys.telemetryDirectory)
+        return TelemetryConfig.defaultDirectory
+    }
+
     init() {
         // `register(defaults:)` (not `bool(forKey:)`/`double(forKey:)` fallbacks) so a
         // never-set `useClaudeSeverity` reads as `true` rather than `Bool`'s own
@@ -257,9 +286,11 @@ final class AppSettings {
             ? storedRetention
             : TelemetryConfig.defaultRetentionDays
         let storedDirectory = defaults.string(forKey: Keys.telemetryDirectory) ?? ""
-        telemetryDirectory = storedDirectory.isEmpty
+        let selectedDirectory = storedDirectory.isEmpty
             ? TelemetryConfig.defaultDirectory
             : URL(filePath: (storedDirectory as NSString).expandingTildeInPath, directoryHint: .isDirectory)
+        // Before anything can write: the recorder starts after settings exist.
+        telemetryDirectory = Self.migrateLegacyTelemetryFolder(selected: selectedDirectory)
 
         var enabledStore: [String: Bool] = [:]
         var reactionStore: [String: ReactionChoice] = [:]

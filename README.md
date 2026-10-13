@@ -58,9 +58,9 @@ Open **Settings…** from the dropdown:
 
 ## Telemetry
 
-ClaudeBar can write your usage history to disk in OpenTelemetry's OTLP JSON format, so you can chart it with `jq` and a spreadsheet or feed it into any OpenTelemetry tool. It's opt-in. Nothing is written until you tick **Record usage history** in Settings, and ClaudeBar never uploads the files. The folder is yours, though: if it syncs (Documents does when iCloud Desktop & Documents is on), the files sync with it, so choose a local folder if you'd rather they stayed on this Mac.
+ClaudeBar can write your usage history to disk in OpenTelemetry's OTLP JSON format, so you can chart it with `jq` and a spreadsheet or feed it into any OpenTelemetry tool. It's opt-in. Nothing is written until you tick **Record usage history** in Settings, and ClaudeBar never uploads the files. The folder is yours, though: if you choose one that syncs (Documents does when iCloud Desktop & Documents is on), the files sync with it.
 
-By default the files go to `~/Documents/ClaudeBar Telemetry`. You can choose another folder in Settings, along with how often to record (every 1, 5, 15, 30 or 60 minutes, default 5) and how long to keep files (7, 30, 90, 180 or 365 days, or forever; default 90). Each UTC day gets two files:
+By default the files go to `~/Library/Application Support/ClaudeBar/Telemetry`, which stays on this Mac and doesn't trigger macOS's Documents access prompt. Earlier versions used `~/Documents/ClaudeBar Telemetry`; on launch ClaudeBar moves the `claudebar-metrics-*` and `claudebar-logs-*` files from there into the new folder (it never touches anything else in it) unless you've chosen a folder yourself. You can choose another folder in Settings, along with how often to record (every 1, 5, 15, 30 or 60 minutes, default 5) and how long to keep files (7, 30, 90, 180 or 365 days, or forever; default 90). Each UTC day gets two files:
 
 - `claudebar-metrics-YYYY-MM-DD.jsonl` holds one OTLP `ExportMetricsServiceRequest` per line, one line per recording.
 - `claudebar-logs-YYYY-MM-DD.jsonl` holds one OTLP `ExportLogsServiceRequest` per line, written only when something changed.
@@ -121,7 +121,7 @@ receivers:
     # The receiver starts at the end of each file by default, which would skip history.
     start_at: beginning
     include:
-      - "/Users/you/Documents/ClaudeBar Telemetry/*.jsonl"
+      - "/Users/you/Library/Application Support/ClaudeBar/Telemetry/*.jsonl"
 exporters:
   debug:
     verbosity: detailed
