@@ -11,6 +11,8 @@ enum AuthState: Sendable {
     case ok
     case tokenExpired
     case noToken
+    /// Self-contained sign-in is missing or was rejected; only signing in again fixes it.
+    case signedOut
 }
 
 @MainActor
@@ -118,6 +120,9 @@ final class UsageViewModel {
             lastError = nil
         } catch UsageClient.UsageError.noToken {
             authState = .noToken
+            lastError = nil
+        } catch UsageClient.UsageError.signedOut {
+            authState = .signedOut
             lastError = nil
         } catch {
             logger.error("usage refresh failed: \(error.localizedDescription, privacy: .public)")

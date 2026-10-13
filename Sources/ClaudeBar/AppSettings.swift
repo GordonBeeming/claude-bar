@@ -4,8 +4,8 @@ import Observation
 import OSLog
 
 /// Where the usage token comes from. `claudeCode` (default) reads Claude Code's Keychain
-/// item; `selfContained` uses our own OAuth sign-in and only falls back to Claude Code's
-/// token if ours fails.
+/// item; `selfContained` uses our own OAuth sign-in and never reads Claude Code's item, so
+/// it never triggers the Keychain prompt. If our sign-in fails, the menu asks to sign in again.
 enum CredentialSource: String, CaseIterable, Sendable {
     case claudeCode
     case selfContained

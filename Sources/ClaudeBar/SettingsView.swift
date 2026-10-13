@@ -31,7 +31,7 @@ struct SettingsView: View {
 
                 if settings.credentialSource == .selfContained {
                     signInControls
-                    Text("Signs in with its own token, so macOS stops re-asking for Keychain access every time Claude Code rotates its token. Falls back to Claude Code's token if this sign-in ever fails.")
+                    Text("Signs in with its own token, so macOS stops re-asking for Keychain access every time Claude Code rotates its token. If this sign-in ever stops working, the menu asks you to sign in again here.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
