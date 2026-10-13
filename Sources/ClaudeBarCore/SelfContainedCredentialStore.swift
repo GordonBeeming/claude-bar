@@ -8,7 +8,12 @@ import Security
 /// Code's item triggers — that's the whole point of self-contained sign-in. Refreshes are
 /// our token's, so they never disturb Claude Code's credentials.
 public struct SelfContainedCredentialStore: Sendable {
-    public enum StoreError: Error { case keychainWriteFailed }
+    public enum StoreError: Error, Equatable {
+        case keychainWriteFailed
+        /// Anthropic refused the refresh as expired or revoked (400/401). The pair that was
+        /// refreshed has already been cleared, if it was still the stored one.
+        case grantRejected(status: Int)
+    }
 
     /// What was found in the Keychain. `clearedStaleScope` is reported rather than folded
     /// into `none` so Settings can explain the sign-out instead of the user finding
@@ -201,6 +206,32 @@ public struct SelfContainedCredentialStore: Sendable {
         SecItemDelete(query as CFDictionary)
     }
 
+    /// Deletes the stored pair only if it is still `tokens`, matched on the same identity
+    /// `saveRotated` uses, so the Keychain arbitrates. A rejection that lands after the user
+    /// signed in again must not delete the new sign-in. Returns whether anything was deleted.
+    @discardableResult
+    public func clear(ifStillHolding tokens: OAuthTokens) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrGeneric as String: Self.identity(of: tokens)
+        ]
+        return SecItemDelete(query as CFDictionary) == errSecSuccess
+    }
+
+    /// Deletes the stored pair only if its access token is the one that was rejected. The
+    /// usage request is a network round trip, so a new sign-in can replace the pair while it
+    /// is in flight; that sign-in survives.
+    @discardableResult
+    public func clear(ifAccessToken accessToken: String) -> Bool {
+        guard let stored = load(), stored.accessToken == accessToken else {
+            Self.storeLogger.notice("rejected token is no longer the stored one; keeping the stored sign-in")
+            return false
+        }
+        return clear(ifStillHolding: stored)
+    }
+
     /// Revokes one specific grant. Deliberately takes the token rather than reading the
     /// Keychain itself: sign-out deletes synchronously and revokes detached, so a re-read here
     /// could pick up — and kill — a credential from a sign-in that completed in between. If the
@@ -211,9 +242,10 @@ public struct SelfContainedCredentialStore: Sendable {
     }
 
     /// The current access token, refreshing first when it's near expiry. Returns nil when
-    /// there's no stored token (not signed in). A refresh failure is *thrown*, not swallowed,
-    /// so the caller can tell an auth rejection (the sign-in is dead) apart from a
-    /// network/server error (fail the poll and keep the sign-in).
+    /// there's no stored token (not signed in). A refresh rejected as expired or revoked
+    /// clears the pair that was refreshed (only if it's still the stored one) and throws
+    /// `StoreError.grantRejected`. Any other refresh failure is rethrown with the sign-in kept,
+    /// so a network or server error fails only this poll.
     public func validAccessToken(now: Date = Date()) async throws -> String? {
         guard let tokens = load() else { return nil }
         guard OAuthClient.needsRefresh(expiresAt: tokens.expiresAt, now: now) else {
@@ -222,6 +254,10 @@ public struct SelfContainedCredentialStore: Sendable {
         let refreshed: OAuthTokens
         do {
             refreshed = try await client.refresh(refreshToken: tokens.refreshToken, grantedScope: tokens.scope)
+        } catch OAuthClient.OAuthError.http(let status) where status == 400 || status == 401 {
+            let cleared = clear(ifStillHolding: tokens)
+            Self.storeLogger.notice("refresh rejected (\(status, privacy: .public)); \(cleared ? "cleared that sign-in" : "a newer sign-in replaced it, kept that", privacy: .public)")
+            throw StoreError.grantRejected(status: status)
         } catch {
             Self.storeLogger.error("token refresh failed: \(String(describing: error), privacy: .public)")
             throw error

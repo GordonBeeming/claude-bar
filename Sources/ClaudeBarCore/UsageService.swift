@@ -12,7 +12,8 @@ public actor UsageService {
 
     private let selfContainedToken: @Sendable () async throws -> String?
     private let claudeCodeToken: @Sendable () async -> String?
-    private let clearSelfContained: @Sendable () async -> Void
+    /// Clears our sign-in only if the given access token is still the stored one.
+    private let clearSelfContained: @Sendable (String) async -> Void
     private let fetchUsage: @Sendable (String) async throws -> UsageResponse
     /// Shared by the usage poll and the account-offers fetch, which can ask at the same
     /// moment: each refresh spends our single-use refresh token, so they must not both refresh.
@@ -26,7 +27,7 @@ public actor UsageService {
         self.init(
             selfContainedToken: { try await store.validAccessToken() },
             claudeCodeToken: { credentials.loadAccessToken() },
-            clearSelfContained: { store.clear() },
+            clearSelfContained: { store.clear(ifAccessToken: $0) },
             fetchUsage: { try await client.fetchUsage(token: $0) }
         )
     }
@@ -34,7 +35,7 @@ public actor UsageService {
     init(
         selfContainedToken: @escaping @Sendable () async throws -> String?,
         claudeCodeToken: @escaping @Sendable () async -> String?,
-        clearSelfContained: @escaping @Sendable () async -> Void,
+        clearSelfContained: @escaping @Sendable (String) async -> Void,
         fetchUsage: @escaping @Sendable (String) async throws -> UsageResponse
     ) {
         self.selfContainedToken = selfContainedToken
@@ -46,9 +47,10 @@ public actor UsageService {
     /// Fetches usage with the chosen source's token and no other. Self-contained mode never
     /// reads Claude Code's Keychain item: that read is what puts up the consent prompt, and
     /// avoiding it is the reason to choose self-contained sign-in. When our own sign-in is
-    /// missing, or Anthropic rejects it (a 401 from usage, a 400/401 refresh), the dead pair
-    /// is dropped and the error is `signedOut`, so the menu can say to sign in again. A
-    /// network or server error is rethrown and the sign-in kept.
+    /// missing, or Anthropic rejects it (a 401 from usage, a 400/401 refresh), the rejected
+    /// pair is dropped (never a newer sign-in that landed meanwhile) and the error is
+    /// `signedOut`, so the menu can say to sign in again. A network or server error is
+    /// rethrown and the sign-in kept.
     public func fetch(preferSelfContained: Bool = false) async throws -> UsageResponse {
         guard preferSelfContained else {
             guard let token = await claudeCodeToken() else {
@@ -59,21 +61,26 @@ public actor UsageService {
             return response
         }
 
+        let token: String
         do {
-            guard let token = try await currentSelfContainedToken() else {
+            guard let current = try await currentSelfContainedToken() else {
                 logger.notice("usage skipped: no self-contained sign-in")
                 throw UsageClient.UsageError.signedOut
             }
+            token = current
+        } catch SelfContainedCredentialStore.StoreError.grantRejected(let status) {
+            // The store has already cleared the pair it refreshed.
+            logger.notice("self-contained refresh rejected (\(status, privacy: .public)); sign in again to restore")
+            throw UsageClient.UsageError.signedOut
+        }
+
+        do {
             let response = try await fetchUsage(token)
             logger.notice("usage served via \(TokenSource.selfContained.rawValue, privacy: .public)")
             return response
         } catch UsageClient.UsageError.unauthorized {
-            await clearSelfContained()
-            logger.notice("self-contained token rejected (401), cleared it; sign in again to restore")
-            throw UsageClient.UsageError.signedOut
-        } catch OAuthClient.OAuthError.http(let status) where status == 400 || status == 401 {
-            await clearSelfContained()
-            logger.notice("self-contained refresh rejected (\(status, privacy: .public)), cleared it; sign in again to restore")
+            await clearSelfContained(token)
+            logger.notice("self-contained token rejected (401); sign in again to restore")
             throw UsageClient.UsageError.signedOut
         }
     }

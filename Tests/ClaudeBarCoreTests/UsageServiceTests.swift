@@ -6,12 +6,12 @@ import Testing
 /// never read in self-contained mode: that read is what puts up the consent prompt.
 private actor Probe {
     private(set) var claudeCodeReads = 0
-    private(set) var clears = 0
+    private(set) var clearedTokens: [String] = []
     private(set) var selfContainedReads = 0
     private(set) var usageTokens: [String] = []
 
     func readClaudeCode() { claudeCodeReads += 1 }
-    func clear() { clears += 1 }
+    func clear(_ token: String) { clearedTokens.append(token) }
     func readSelfContained() { selfContainedReads += 1 }
     func fetched(with token: String) { usageTokens.append(token) }
 }
@@ -32,7 +32,7 @@ struct UsageServiceTests {
                 await probe.readClaudeCode()
                 return claudeCode
             },
-            clearSelfContained: { await probe.clear() },
+            clearSelfContained: { await probe.clear($0) },
             fetchUsage: { token in
                 await probe.fetched(with: token)
                 return try await usage(token)
@@ -63,7 +63,7 @@ struct UsageServiceTests {
         #expect(await probe.usageTokens.isEmpty)
     }
 
-    @Test("A token the usage API rejects is cleared and reads as signed out")
+    @Test("A token the usage API rejects is cleared, by that token, and reads as signed out")
     func rejectedTokenSignsOut() async {
         let probe = Probe()
         let service = Self.service(
@@ -75,19 +75,23 @@ struct UsageServiceTests {
         await #expect(throws: UsageClient.UsageError.signedOut) {
             try await service.fetch(preferSelfContained: true)
         }
-        #expect(await probe.clears == 1)
+        // Only the rejected token is named, so a sign-in that landed meanwhile survives.
+        #expect(await probe.clearedTokens == ["own-token"])
         #expect(await probe.claudeCodeReads == 0)
     }
 
-    @Test("A refresh rejected as expired or revoked is cleared and reads as signed out", arguments: [400, 401])
+    @Test("A refresh rejected as expired or revoked reads as signed out", arguments: [400, 401])
     func rejectedRefreshSignsOut(status: Int) async {
         let probe = Probe()
-        let service = Self.service(probe, selfContained: { throw OAuthClient.OAuthError.http(status) })
+        let service = Self.service(probe, selfContained: {
+            throw SelfContainedCredentialStore.StoreError.grantRejected(status: status)
+        })
 
         await #expect(throws: UsageClient.UsageError.signedOut) {
             try await service.fetch(preferSelfContained: true)
         }
-        #expect(await probe.clears == 1)
+        // The store already cleared the exact pair it refreshed; the service mustn't clear again.
+        #expect(await probe.clearedTokens.isEmpty)
         #expect(await probe.claudeCodeReads == 0)
     }
 
@@ -99,7 +103,7 @@ struct UsageServiceTests {
         await #expect(throws: OAuthClient.OAuthError.http(503)) {
             try await service.fetch(preferSelfContained: true)
         }
-        #expect(await probe.clears == 0)
+        #expect(await probe.clearedTokens.isEmpty)
         #expect(await probe.claudeCodeReads == 0)
     }
 
@@ -117,7 +121,9 @@ struct UsageServiceTests {
     @Test("Account offers in self-contained mode never fall back to Claude Code's token")
     func offersDoNotFallBack() async {
         let probe = Probe()
-        let service = Self.service(probe, selfContained: { throw OAuthClient.OAuthError.http(400) })
+        let service = Self.service(probe, selfContained: {
+            throw SelfContainedCredentialStore.StoreError.grantRejected(status: 400)
+        })
 
         let offers = await service.fetchAccountOffers(preferSelfContained: true)
 
@@ -166,11 +172,28 @@ struct SingleFlightTests {
     @Test("A failed run is shared by everyone waiting on it, then forgotten")
     func failureIsSharedThenCleared() async throws {
         struct Boom: Error {}
+        let counter = Counter()
         let flight = SingleFlight<Int>()
-
-        await #expect(throws: Boom.self) {
-            try await flight.run { throw Boom() }
+        let failing: @Sendable () async throws -> Int = {
+            _ = await counter.next()
+            try await Task.sleep(for: .milliseconds(100))
+            throw Boom()
         }
+
+        let caller: @Sendable () async -> Error? = {
+            do {
+                _ = try await flight.run(failing)
+                return nil
+            } catch {
+                return error
+            }
+        }
+        async let first = caller()
+        async let second = caller()
+        let errors = await [first, second]
+
+        #expect(errors.allSatisfy { $0 is Boom })
+        #expect(await counter.runs == 1)
         #expect(try await flight.run { 7 } == 7)
     }
 }

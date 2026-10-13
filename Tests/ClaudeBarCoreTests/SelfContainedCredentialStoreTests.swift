@@ -51,6 +51,59 @@ struct SelfContainedCredentialStoreTests {
         SecItemAdd(query.merging([kSecValueData as String: Data(json.utf8)]) { _, new in new } as CFDictionary, nil)
     }
 
+    private static func tokens(access: String, refresh: String) -> OAuthTokens {
+        OAuthTokens(
+            accessToken: access,
+            refreshToken: refresh,
+            expiresAt: Date().addingTimeInterval(3600),
+            scope: OAuthConfig.scopes
+        )
+    }
+
+    @Test("A rejected token clears the sign-in it came from", .enabled(if: keychainAvailable))
+    func rejectedTokenClearsItsOwnSignIn() {
+        let service = "com.gordonbeeming.ClaudeBar.tests.reject-own"
+        let store = Self.store(service)
+        defer { store.clear() }
+
+        let current = Self.tokens(access: "at-1", refresh: "rt-1")
+        #expect(store.save(current))
+
+        #expect(store.clear(ifAccessToken: "at-1"))
+        #expect(store.load() == nil)
+    }
+
+    @Test("A rejection that lands after a new sign-in leaves the new sign-in alone", .enabled(if: keychainAvailable))
+    func rejectionAfterNewSignInKeepsIt() {
+        let service = "com.gordonbeeming.ClaudeBar.tests.reject-replaced"
+        let store = Self.store(service)
+        defer { store.clear() }
+
+        #expect(store.save(Self.tokens(access: "at-old", refresh: "rt-old")))
+        let fresh = Self.tokens(access: "at-new", refresh: "rt-new")
+        #expect(store.save(fresh))
+
+        #expect(!store.clear(ifAccessToken: "at-old"))
+        #expect(store.load() == fresh)
+    }
+
+    @Test("Clearing a specific pair does nothing once it has been replaced", .enabled(if: keychainAvailable))
+    func clearIfStillHoldingIsACompareAndSwap() {
+        let service = "com.gordonbeeming.ClaudeBar.tests.reject-cas"
+        let store = Self.store(service)
+        defer { store.clear() }
+
+        let old = Self.tokens(access: "at-old", refresh: "rt-old")
+        let fresh = Self.tokens(access: "at-new", refresh: "rt-new")
+        #expect(store.save(old))
+        #expect(store.save(fresh))
+
+        #expect(!store.clear(ifStillHolding: old))
+        #expect(store.load() == fresh)
+        #expect(store.clear(ifStillHolding: fresh))
+        #expect(store.load() == nil)
+    }
+
     /// Revocation is deliberately not asserted on the stale-scope path: `retireStaleGrant`
     /// fires it detached, so any assertion on it would be a race. The handler is stubbed to
     /// keep the test off the network, which is the property that matters here; the same
