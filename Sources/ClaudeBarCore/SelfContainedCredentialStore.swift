@@ -10,7 +10,8 @@ import Security
 public struct SelfContainedCredentialStore: Sendable {
     public enum StoreError: Error, Equatable {
         case keychainWriteFailed
-        /// Anthropic refused the refresh as expired or revoked (400/401). The pair that was
+        /// Anthropic refused the refresh with `invalid_grant` (expired, revoked or already
+        /// used). The pair that was
         /// refreshed has already been cleared, if it was still the stored one.
         case grantRejected(status: Int)
         /// The Keychain couldn't be read right now (anything but "not found"). The sign-in may
@@ -268,7 +269,7 @@ public struct SelfContainedCredentialStore: Sendable {
     }
 
     /// The current access token, refreshing first when it's near expiry. Returns nil when
-    /// there's no stored token (not signed in). A refresh rejected as expired or revoked
+    /// there's no stored token (not signed in). A refresh rejected with `invalid_grant`
     /// clears the pair that was refreshed (only if it's still the stored one) and throws
     /// `StoreError.grantRejected`. Any other refresh failure is rethrown with the sign-in kept,
     /// so a network or server error fails only this poll.
@@ -288,7 +289,10 @@ public struct SelfContainedCredentialStore: Sendable {
         let refreshed: OAuthTokens
         do {
             refreshed = try await refresher(tokens.refreshToken, tokens.scope)
-        } catch OAuthClient.OAuthError.http(let status) where status == 400 || status == 401 {
+        } catch OAuthClient.OAuthError.rejected(let status, OAuthClient.invalidGrant) {
+            // Only `invalid_grant` means the refresh token is dead. Any other rejection (a
+            // malformed request, a client the gateway briefly refuses) keeps the sign-in and
+            // fails this poll through the generic branch below.
             if clear(ifStillHolding: tokens) {
                 Self.storeLogger.notice("refresh rejected (\(status, privacy: .public)); cleared that sign-in")
                 throw StoreError.grantRejected(status: status)

@@ -12,6 +12,12 @@ private actor Probe {
 
     func readClaudeCode() { claudeCodeReads += 1 }
     func clear(_ token: String) { clearedTokens.append(token) }
+    private var issued = 0
+    /// Hands out each token in turn, so a test can play a sign-in replacing the first.
+    func nextToken(from tokens: [String]) -> String? {
+        defer { issued += 1 }
+        return issued < tokens.count ? tokens[issued] : tokens.last
+    }
     func readSelfContained() { selfContainedReads += 1 }
     func fetched(with token: String) { usageTokens.append(token) }
 }
@@ -21,6 +27,7 @@ struct UsageServiceTests {
         _ probe: Probe,
         selfContained: @escaping @Sendable () async throws -> String?,
         claudeCode: String? = "claude-code-token",
+        clearSucceeds: @escaping @Sendable (String) -> Bool = { _ in true },
         usage: @escaping @Sendable (String) async throws -> UsageResponse = { _ in UsageResponse(limits: []) }
     ) -> UsageService {
         UsageService(
@@ -32,7 +39,10 @@ struct UsageServiceTests {
                 await probe.readClaudeCode()
                 return claudeCode
             },
-            clearSelfContained: { await probe.clear($0) },
+            clearSelfContained: { token in
+                await probe.clear(token)
+                return clearSucceeds(token)
+            },
             fetchUsage: { token in
                 await probe.fetched(with: token)
                 return try await usage(token)
@@ -77,6 +87,25 @@ struct UsageServiceTests {
         }
         // Only the rejected token is named, so a sign-in that landed meanwhile survives.
         #expect(await probe.clearedTokens == ["own-token"])
+        #expect(await probe.claudeCodeReads == 0)
+    }
+
+    @Test("A 401 on a token a newer sign-in replaced retries with the newer one")
+    func rejectedTokenReplacedRetries() async throws {
+        let probe = Probe()
+        let service = Self.service(
+            probe,
+            selfContained: { await probe.nextToken(from: ["old-token", "new-token"]) },
+            clearSucceeds: { _ in false },
+            usage: { token in
+                guard token == "new-token" else { throw UsageClient.UsageError.unauthorized }
+                return UsageResponse(limits: [])
+            }
+        )
+
+        _ = try await service.fetch(preferSelfContained: true)
+
+        #expect(await probe.usageTokens == ["old-token", "new-token"])
         #expect(await probe.claudeCodeReads == 0)
     }
 

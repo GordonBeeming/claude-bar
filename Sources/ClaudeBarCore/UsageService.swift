@@ -12,8 +12,9 @@ public actor UsageService {
 
     private let selfContainedToken: @Sendable () async throws -> String?
     private let claudeCodeToken: @Sendable () async -> String?
-    /// Clears our sign-in only if the given access token is still the stored one.
-    private let clearSelfContained: @Sendable (String) async -> Void
+    /// Clears our sign-in only if the given access token is still the stored one, and says
+    /// whether it did: false means a newer sign-in replaced it.
+    private let clearSelfContained: @Sendable (String) async -> Bool
     private let fetchUsage: @Sendable (String) async throws -> UsageResponse
     /// Shared by the usage poll and the account-offers fetch, which can ask at the same
     /// moment: each refresh spends our single-use refresh token, so they must not both refresh.
@@ -35,7 +36,7 @@ public actor UsageService {
     init(
         selfContainedToken: @escaping @Sendable () async throws -> String?,
         claudeCodeToken: @escaping @Sendable () async -> String?,
-        clearSelfContained: @escaping @Sendable (String) async -> Void,
+        clearSelfContained: @escaping @Sendable (String) async -> Bool,
         fetchUsage: @escaping @Sendable (String) async throws -> UsageResponse
     ) {
         self.selfContainedToken = selfContainedToken
@@ -47,7 +48,7 @@ public actor UsageService {
     /// Fetches usage with the chosen source's token and no other. Self-contained mode never
     /// reads Claude Code's Keychain item: that read is what puts up the consent prompt, and
     /// avoiding it is the reason to choose self-contained sign-in. When our own sign-in is
-    /// missing, or Anthropic rejects it (a 401 from usage, a 400/401 refresh), the rejected
+    /// missing, or Anthropic rejects it (a 401 from usage, `invalid_grant` on refresh), the rejected
     /// pair is dropped (never a newer sign-in that landed meanwhile) and the error is
     /// `signedOut`, so the menu can say to sign in again. A network or server error is
     /// rethrown and the sign-in kept.
@@ -61,28 +62,50 @@ public actor UsageService {
             return response
         }
 
-        let token: String
+        let token = try await selfContainedTokenOrSignedOut()
         do {
-            guard let current = try await currentSelfContainedToken() else {
+            return try await serveSelfContained(token)
+        } catch UsageClient.UsageError.unauthorized {
+            if await clearSelfContained(token) {
+                logger.notice("self-contained token rejected (401); sign in again to restore")
+                throw UsageClient.UsageError.signedOut
+            }
+            // A newer sign-in replaced the rejected one while the request was in flight: try
+            // that once rather than telling a freshly signed-in user to sign in again.
+            logger.notice("self-contained token rejected (401), but a newer sign-in replaced it; retrying with that")
+            let replacement = try await selfContainedTokenOrSignedOut()
+            do {
+                return try await serveSelfContained(replacement)
+            } catch UsageClient.UsageError.unauthorized {
+                if await clearSelfContained(replacement) {
+                    logger.notice("replacement token rejected (401) too; sign in again to restore")
+                    throw UsageClient.UsageError.signedOut
+                }
+                // Replaced yet again mid-request: fail this poll, and the next one uses it.
+                throw UsageClient.UsageError.http(401)
+            }
+        }
+    }
+
+    /// Our token, or `signedOut` when there isn't a usable one.
+    private func selfContainedTokenOrSignedOut() async throws -> String {
+        do {
+            guard let token = try await currentSelfContainedToken() else {
                 logger.notice("usage skipped: no self-contained sign-in")
                 throw UsageClient.UsageError.signedOut
             }
-            token = current
+            return token
         } catch SelfContainedCredentialStore.StoreError.grantRejected(let status) {
             // The store has already cleared the pair it refreshed.
             logger.notice("self-contained refresh rejected (\(status, privacy: .public)); sign in again to restore")
             throw UsageClient.UsageError.signedOut
         }
+    }
 
-        do {
-            let response = try await fetchUsage(token)
-            logger.notice("usage served via \(TokenSource.selfContained.rawValue, privacy: .public)")
-            return response
-        } catch UsageClient.UsageError.unauthorized {
-            await clearSelfContained(token)
-            logger.notice("self-contained token rejected (401); sign in again to restore")
-            throw UsageClient.UsageError.signedOut
-        }
+    private func serveSelfContained(_ token: String) async throws -> UsageResponse {
+        let response = try await fetchUsage(token)
+        logger.notice("usage served via \(TokenSource.selfContained.rawValue, privacy: .public)")
+        return response
     }
 
     private let accountClient = AccountClient()

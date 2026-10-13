@@ -84,7 +84,7 @@ struct SelfContainedCredentialStoreTests {
         let store = SelfContainedCredentialStore(
             service: service,
             revokeHandler: { _ in },
-            refresher: { _, _ in throw OAuthClient.OAuthError.http(400) }
+            refresher: { _, _ in throw OAuthClient.OAuthError.rejected(status: 400, code: OAuthClient.invalidGrant) }
         )
 
         await #expect(throws: SelfContainedCredentialStore.StoreError.grantRejected(status: 400)) {
@@ -106,12 +106,32 @@ struct SelfContainedCredentialStoreTests {
             refresher: { _, _ in
                 // The user signs in again while the old refresh is in flight.
                 _ = seed.save(fresh)
-                throw OAuthClient.OAuthError.http(401)
+                throw OAuthClient.OAuthError.rejected(status: 400, code: OAuthClient.invalidGrant)
             }
         )
 
         #expect(try await store.validAccessToken() == "at-new")
         #expect(store.load() == fresh)
+    }
+
+    @Test("A 400 that isn't invalid_grant keeps the sign-in", .enabled(if: keychainAvailable))
+    func otherRejectionKeepsSignIn() async {
+        let service = "com.gordonbeeming.ClaudeBar.tests.refresh-other-400"
+        let seed = SelfContainedCredentialStore(service: service, revokeHandler: { _ in })
+        defer { seed.clear() }
+        let old = Self.expired(access: "at-old", refresh: "rt-old")
+        #expect(seed.save(old))
+        let refusal = OAuthClient.OAuthError.rejected(status: 400, code: "invalid_request")
+        let store = SelfContainedCredentialStore(
+            service: service,
+            revokeHandler: { _ in },
+            refresher: { _, _ in throw refusal }
+        )
+
+        await #expect(throws: refusal) {
+            try await store.validAccessToken()
+        }
+        #expect(store.load() == old)
     }
 
     @Test("A network or server error on refresh keeps the sign-in", .enabled(if: keychainAvailable))

@@ -6,9 +6,17 @@ import Foundation
 public struct OAuthClient: Sendable {
     public enum OAuthError: Error, Equatable {
         case http(Int)
+        /// A non-2xx answer carrying an OAuth `error` code (RFC 6749 §5.2), such as
+        /// `invalid_grant`. Kept apart from `http` so only a grant that is really dead gets
+        /// cleared, not every 400.
+        case rejected(status: Int, code: String)
         case malformedResponse
         case stateMismatch
     }
+
+    /// The `error` code a token endpoint sends for an expired, revoked or already-used
+    /// refresh token. The only answer that means the stored grant is dead.
+    public static let invalidGrant = "invalid_grant"
 
     public init() {}
 
@@ -120,12 +128,24 @@ public struct OAuthClient: Sendable {
         return request
     }
 
-    /// Sends the request and hands back its body, turning anything that isn't a 2xx into
-    /// `OAuthError.http` so callers can distinguish an auth rejection from a transport failure.
+    /// Sends the request and hands back its body, turning anything that isn't a 2xx into an
+    /// `OAuthError` so callers can distinguish an auth rejection from a transport failure.
     private func send(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw OAuthError.http(-1) }
-        guard (200..<300).contains(http.statusCode) else { throw OAuthError.http(http.statusCode) }
+        guard (200..<300).contains(http.statusCode) else {
+            throw Self.error(status: http.statusCode, body: data)
+        }
         return data
+    }
+
+    /// The error for a non-2xx answer: `rejected` with the OAuth `error` code when the body
+    /// carries one, plain `http` otherwise. Pure — unit-tested.
+    static func error(status: Int, body: Data) -> OAuthError {
+        struct ErrorBody: Decodable { let error: String }
+        guard let code = try? JSONDecoder().decode(ErrorBody.self, from: body).error, !code.isEmpty else {
+            return .http(status)
+        }
+        return .rejected(status: status, code: code)
     }
 }

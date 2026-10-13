@@ -135,11 +135,11 @@ final class OAuthLoginController {
             return "Security check failed (state mismatch). Start sign-in again."
         case OAuthClient.OAuthError.malformedResponse:
             return "Unexpected response from Anthropic. Try again."
-        case OAuthClient.OAuthError.http(429):
+        case OAuthClient.OAuthError.http(429), OAuthClient.OAuthError.rejected(429, _):
             return "Anthropic is rate-limiting sign-in right now. Wait a minute, then try again."
-        case OAuthClient.OAuthError.http(400):
+        case OAuthClient.OAuthError.http(400), OAuthClient.OAuthError.rejected(400, _):
             return "That code didn't take (expired or already used). Try again for a fresh one."
-        case OAuthClient.OAuthError.http(let status):
+        case OAuthClient.OAuthError.http(let status), OAuthClient.OAuthError.rejected(let status, _):
             return "Sign-in failed (HTTP \(status)). Try again for a fresh code."
         default:
             return "Sign-in failed: \(error.localizedDescription)"
