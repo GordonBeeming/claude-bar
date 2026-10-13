@@ -15,11 +15,17 @@ public struct TelemetryConfig: Sendable, Equatable {
     /// 0 is "keep forever".
     public static let retentionDaysRange = 0...3650
 
-    /// Somewhere a person can find without knowing macOS's hidden app folders.
+    /// Inside the app's own Application Support folder, so macOS never asks for Documents
+    /// access just to write telemetry.
     public static var defaultDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Documents", directoryHint: .isDirectory)
-            .appending(path: "ClaudeBar Telemetry", directoryHint: .isDirectory)
+        defaultDirectory(home: FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    public static func defaultDirectory(home: URL) -> URL {
+        home.appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Application Support", directoryHint: .isDirectory)
+            .appending(path: "ClaudeBar", directoryHint: .isDirectory)
+            .appending(path: "Telemetry", directoryHint: .isDirectory)
     }
 
     public var enabled: Bool

@@ -143,7 +143,7 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                 }
 
-                Text("Writes your limits, Claude Code token counts, extra usage, guest passes and credit offers as OpenTelemetry (OTLP JSON) files you can chart or feed to a Collector. ClaudeBar never uploads them, but a folder that syncs (Documents with iCloud, say) will copy them like any other file.")
+                Text("Writes your limits, Claude Code token counts, extra usage, guest passes and credit offers as OpenTelemetry (OTLP JSON) files you can chart or feed to a Collector. ClaudeBar never uploads them. The default folder is in Application Support and stays on this Mac, but a folder you choose that syncs (Documents with iCloud, say) will copy them like any other file.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
