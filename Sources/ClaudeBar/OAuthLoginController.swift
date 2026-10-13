@@ -34,6 +34,22 @@ final class OAuthLoginController {
     private let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "OAuthLogin")
 
     init() {
+        phase = .signedOut
+        resync()
+    }
+
+    /// Re-reads the stored sign-in so Settings matches what polling sees. The usage poll can
+    /// drop a rejected sign-in on its own, and without this Settings would keep showing
+    /// "Signed in" while the menu asks the user to sign in again. A browser flow in progress
+    /// is left alone, and an unreadable Keychain changes nothing: whether a sign-in exists is
+    /// unknown, so the last known state stands.
+    func resync() {
+        switch phase {
+        case .awaitingCode, .exchanging:
+            return
+        case .signedOut, .signedOutStaleScope, .signedIn, .failed:
+            break
+        }
         switch store.evaluate() {
         case .usable(let tokens):
             phase = .signedIn(expiresAt: tokens.expiresAt)
@@ -43,7 +59,15 @@ final class OAuthLoginController {
                 "cleared a stored grant with stale scope \(storedScope.isEmpty ? "<unrecorded>" : storedScope, privacy: .public)"
             )
         case .missing:
+            if case .signedIn = phase {
+                logger.notice("stored sign-in is gone; showing signed out")
+            }
+            if case .failed = phase, pending != nil {
+                return
+            }
             phase = .signedOut
+        case .unreadable(let status):
+            logger.error("couldn't read the stored sign-in (OSStatus \(status, privacy: .public)); keeping the last known state")
         }
     }
 
@@ -111,11 +135,11 @@ final class OAuthLoginController {
             return "Security check failed (state mismatch). Start sign-in again."
         case OAuthClient.OAuthError.malformedResponse:
             return "Unexpected response from Anthropic. Try again."
-        case OAuthClient.OAuthError.http(429):
+        case OAuthClient.OAuthError.http(429), OAuthClient.OAuthError.rejected(429, _):
             return "Anthropic is rate-limiting sign-in right now. Wait a minute, then try again."
-        case OAuthClient.OAuthError.http(400):
+        case OAuthClient.OAuthError.http(400), OAuthClient.OAuthError.rejected(400, _):
             return "That code didn't take (expired or already used). Try again for a fresh one."
-        case OAuthClient.OAuthError.http(let status):
+        case OAuthClient.OAuthError.http(let status), OAuthClient.OAuthError.rejected(let status, _):
             return "Sign-in failed (HTTP \(status)). Try again for a fresh code."
         default:
             return "Sign-in failed: \(error.localizedDescription)"

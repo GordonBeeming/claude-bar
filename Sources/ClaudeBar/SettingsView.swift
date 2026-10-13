@@ -31,7 +31,7 @@ struct SettingsView: View {
 
                 if settings.credentialSource == .selfContained {
                     signInControls
-                    Text("Signs in with its own token, so macOS stops re-asking for Keychain access every time Claude Code rotates its token. Falls back to Claude Code's token if this sign-in ever fails.")
+                    Text("Signs in with its own token, so macOS stops re-asking for Keychain access every time Claude Code rotates its token. If this sign-in ever stops working, the menu asks you to sign in again here.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -156,6 +156,14 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 380)
+        // Polling can drop a rejected sign-in on its own; re-read so this never shows
+        // "Signed in" while the menu asks to sign in again.
+        .onAppear { login.resync() }
+        .onChange(of: model.authState) { _, state in
+            if state == .signedOut {
+                login.resync()
+            }
+        }
     }
 
     private func abbreviatedPath(_ url: URL) -> String {

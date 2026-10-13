@@ -5,6 +5,9 @@ public struct UsageClient: Sendable {
     public enum UsageError: Error, Equatable {
         case noToken
         case unauthorized
+        /// Self-contained mode with no usable sign-in of our own. Kept apart from `noToken`
+        /// because the fix is signing in again in Settings, not anything in Claude Code.
+        case signedOut
         case http(Int)
     }
 

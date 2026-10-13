@@ -109,6 +109,7 @@ struct UsageMenuView: View {
         case .ok: return nil
         case .tokenExpired: return "Token expired — open Claude Code to refresh"
         case .noToken: return "Claude Code credentials not found"
+        case .signedOut: return "Signed out — sign in again in Settings"
         }
     }
 }

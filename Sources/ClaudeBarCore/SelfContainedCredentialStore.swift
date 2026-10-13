@@ -8,7 +8,16 @@ import Security
 /// Code's item triggers — that's the whole point of self-contained sign-in. Refreshes are
 /// our token's, so they never disturb Claude Code's credentials.
 public struct SelfContainedCredentialStore: Sendable {
-    public enum StoreError: Error { case keychainWriteFailed }
+    public enum StoreError: Error, Equatable {
+        case keychainWriteFailed
+        /// Anthropic refused the refresh with `invalid_grant` (expired, revoked or already
+        /// used). The pair that was
+        /// refreshed has already been cleared, if it was still the stored one.
+        case grantRejected(status: Int)
+        /// The Keychain couldn't be read right now (anything but "not found"). The sign-in may
+        /// well still be there, so this fails the poll rather than reading as signed out.
+        case keychainUnavailable(status: Int)
+    }
 
     /// What was found in the Keychain. `clearedStaleScope` is reported rather than folded
     /// into `none` so Settings can explain the sign-out instead of the user finding
@@ -21,6 +30,9 @@ public struct SelfContainedCredentialStore: Sendable {
         /// Dropped because its grant is wider than what this build requests, or predates
         /// scope recording. Carries the stored scope for logging (empty when unknown).
         case clearedStaleScope(storedScope: String)
+        /// The read itself failed with something other than "not found", so whether a sign-in
+        /// exists is unknown. Never treated as signed out.
+        case unreadable(status: OSStatus)
     }
 
     private let service: String
@@ -30,12 +42,19 @@ public struct SelfContainedCredentialStore: Sendable {
     /// stale-scope migration without posting a revoke to Anthropic; production always gets
     /// the real call below.
     private let revokeHandler: @Sendable (String) async -> Void
+    /// Trades a refresh token (and the granted scope) for a new pair. Indirected so tests can
+    /// drive the rejection paths without calling Anthropic.
+    private let refresher: @Sendable (_ refreshToken: String, _ grantedScope: String) async throws -> OAuthTokens
 
     private static let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "OAuthRevoke")
+    /// Every way the stored sign-in can come back empty is logged here, so a drop-out names
+    /// its cause instead of surfacing only as "signed out".
+    private static let storeLogger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "SelfContainedCredentialStore")
 
     public init(service: String = "com.gordonbeeming.ClaudeBar.oauth", client: OAuthClient = OAuthClient()) {
         self.service = service
         self.client = client
+        self.refresher = { try await client.refresh(refreshToken: $0, grantedScope: $1) }
         // Logged rather than swallowed: a failed revoke leaves the grant live until its refresh
         // token expires, and this is the only record that it happened. Still not rethrown —
         // callers have already deleted our copy and can't act on it.
@@ -48,10 +67,16 @@ public struct SelfContainedCredentialStore: Sendable {
         }
     }
 
-    init(service: String, client: OAuthClient = OAuthClient(), revokeHandler: @escaping @Sendable (String) async -> Void) {
+    init(
+        service: String,
+        client: OAuthClient = OAuthClient(),
+        revokeHandler: @escaping @Sendable (String) async -> Void,
+        refresher: (@Sendable (String, String) async throws -> OAuthTokens)? = nil
+    ) {
         self.service = service
         self.client = client
         self.revokeHandler = revokeHandler
+        self.refresher = refresher ?? { try await client.refresh(refreshToken: $0, grantedScope: $1) }
     }
 
     public var isSignedIn: Bool { load() != nil }
@@ -67,21 +92,45 @@ public struct SelfContainedCredentialStore: Sendable {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var item: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else {
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if let failure = Self.readFailure(status: status) {
+            return failure
+        }
+        guard let data = item as? Data else {
+            Self.storeLogger.error("stored sign-in returned no data")
             return .missing
         }
         // Undecodable bytes are left in place rather than deleted: there's no token to revoke,
         // the next sign-in overwrites the item anyway, and deleting on a failed decode would
         // add a destructive path for no gain.
-        guard let tokens = try? JSONDecoder().decode(OAuthTokens.self, from: data) else {
+        let tokens: OAuthTokens
+        do {
+            tokens = try JSONDecoder().decode(OAuthTokens.self, from: data)
+        } catch {
+            Self.storeLogger.error("stored sign-in couldn't be decoded: \(String(describing: error), privacy: .public)")
             return .missing
         }
         guard OAuthTokens.isStale(storedScope: tokens.scope, requestedScope: OAuthConfig.scopes) else {
             return .usable(tokens)
         }
+        Self.storeLogger.notice("retiring a stored grant with scope '\(tokens.scope, privacy: .public)', wider than '\(OAuthConfig.scopes, privacy: .public)'")
         retireStaleGrant(tokens)
         return .clearedStaleScope(storedScope: tokens.scope)
+    }
+
+    /// What a failed Keychain read means: "not found" is a plain signed-out, anything else
+    /// leaves the sign-in's existence unknown. Nil for a successful read.
+    static func readFailure(status: OSStatus) -> StoredCredential? {
+        switch status {
+        case errSecSuccess:
+            return nil
+        case errSecItemNotFound:
+            storeLogger.debug("no stored sign-in")
+            return .missing
+        default:
+            storeLogger.error("reading the stored sign-in failed: OSStatus \(status, privacy: .public)")
+            return .unreadable(status: status)
+        }
     }
 
     public func load() -> OAuthTokens? {
@@ -184,6 +233,32 @@ public struct SelfContainedCredentialStore: Sendable {
         SecItemDelete(query as CFDictionary)
     }
 
+    /// Deletes the stored pair only if it is still `tokens`, matched on the same identity
+    /// `saveRotated` uses, so the Keychain arbitrates. A rejection that lands after the user
+    /// signed in again must not delete the new sign-in. Returns whether anything was deleted.
+    @discardableResult
+    public func clear(ifStillHolding tokens: OAuthTokens) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrGeneric as String: Self.identity(of: tokens)
+        ]
+        return SecItemDelete(query as CFDictionary) == errSecSuccess
+    }
+
+    /// Deletes the stored pair only if its access token is the one that was rejected. The
+    /// usage request is a network round trip, so a new sign-in can replace the pair while it
+    /// is in flight; that sign-in survives.
+    @discardableResult
+    public func clear(ifAccessToken accessToken: String) -> Bool {
+        guard let stored = load(), stored.accessToken == accessToken else {
+            Self.storeLogger.notice("rejected token is no longer the stored one; keeping the stored sign-in")
+            return false
+        }
+        return clear(ifStillHolding: stored)
+    }
+
     /// Revokes one specific grant. Deliberately takes the token rather than reading the
     /// Keychain itself: sign-out deletes synchronously and revokes detached, so a re-read here
     /// could pick up — and kill — a credential from a sign-in that completed in between. If the
@@ -194,27 +269,60 @@ public struct SelfContainedCredentialStore: Sendable {
     }
 
     /// The current access token, refreshing first when it's near expiry. Returns nil when
-    /// there's no stored token (not signed in). A refresh failure is *thrown*, not swallowed,
-    /// so the caller can tell an auth rejection (fall back to Claude Code) apart from a
-    /// network/server error (fail the poll rather than needlessly hit Claude Code's Keychain —
-    /// which would prompt, then fail anyway because the network is down).
+    /// there's no stored token (not signed in). A refresh rejected with `invalid_grant`
+    /// clears the pair that was refreshed (only if it's still the stored one) and throws
+    /// `StoreError.grantRejected`. Any other refresh failure is rethrown with the sign-in kept,
+    /// so a network or server error fails only this poll.
     public func validAccessToken(now: Date = Date()) async throws -> String? {
-        guard let tokens = load() else { return nil }
+        let tokens: OAuthTokens
+        switch evaluate() {
+        case .usable(let stored):
+            tokens = stored
+        case .missing, .clearedStaleScope:
+            return nil
+        case .unreadable(let status):
+            throw StoreError.keychainUnavailable(status: Int(status))
+        }
         guard OAuthClient.needsRefresh(expiresAt: tokens.expiresAt, now: now) else {
             return tokens.accessToken
         }
-        let refreshed = try await client.refresh(refreshToken: tokens.refreshToken, grantedScope: tokens.scope)
+        let refreshed: OAuthTokens
+        do {
+            refreshed = try await refresher(tokens.refreshToken, tokens.scope)
+        } catch OAuthClient.OAuthError.rejected(let status, OAuthClient.invalidGrant) {
+            // Only `invalid_grant` means the refresh token is dead. Any other rejection (a
+            // malformed request, a client the gateway briefly refuses) keeps the sign-in and
+            // fails this poll through the generic branch below.
+            if clear(ifStillHolding: tokens) {
+                Self.storeLogger.notice("refresh rejected (\(status, privacy: .public)); cleared that sign-in")
+                throw StoreError.grantRejected(status: status)
+            }
+            // A new sign-in replaced the rejected pair while the refresh was in flight: that
+            // sign-in is the one to use, not a reason to report signed out.
+            guard let replacement = load() else {
+                Self.storeLogger.notice("refresh rejected (\(status, privacy: .public)); nothing usable is stored")
+                throw StoreError.grantRejected(status: status)
+            }
+            Self.storeLogger.notice("refresh rejected (\(status, privacy: .public)), but a newer sign-in replaced it; using that")
+            return replacement.accessToken
+        } catch {
+            Self.storeLogger.error("token refresh failed: \(String(describing: error), privacy: .public)")
+            throw error
+        }
         switch saveRotated(refreshed, replacing: tokens) {
         case .saved:
+            Self.storeLogger.notice("token refreshed, granted scope '\(refreshed.scope, privacy: .public)'")
             return refreshed.accessToken
         case .superseded:
-            // Signed out, or signed out and back in, while this refresh was in flight. Report
-            // not-signed-in for this poll rather than writing a now-orphaned pair over whatever
-            // replaced it; the next poll picks up whatever is actually stored.
-            return nil
+            // Signed out, or signed out and back in, while this refresh was in flight. Never
+            // write the orphaned pair over whatever replaced it; use what's stored now instead,
+            // which is a fresh sign-in's token or nothing.
+            Self.storeLogger.notice("refreshed pair superseded by a sign-out or new sign-in; using what's stored now")
+            return load()?.accessToken
         case .failed:
             // A refresh rotates the refresh token, so a failed write would strand us: the old
             // token is now invalid and the new one isn't persisted. Fail loudly instead.
+            Self.storeLogger.error("saving the refreshed pair failed")
             throw StoreError.keychainWriteFailed
         }
     }
