@@ -156,6 +156,14 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 380)
+        // Polling can drop a rejected sign-in on its own; re-read so this never shows
+        // "Signed in" while the menu asks to sign in again.
+        .onAppear { login.resync() }
+        .onChange(of: model.authState) { _, state in
+            if state == .signedOut {
+                login.resync()
+            }
+        }
     }
 
     private func abbreviatedPath(_ url: URL) -> String {

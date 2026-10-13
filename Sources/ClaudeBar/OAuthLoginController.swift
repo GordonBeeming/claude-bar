@@ -34,6 +34,22 @@ final class OAuthLoginController {
     private let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "OAuthLogin")
 
     init() {
+        phase = .signedOut
+        resync()
+    }
+
+    /// Re-reads the stored sign-in so Settings matches what polling sees. The usage poll can
+    /// drop a rejected sign-in on its own, and without this Settings would keep showing
+    /// "Signed in" while the menu asks the user to sign in again. A browser flow in progress
+    /// is left alone, and an unreadable Keychain changes nothing: whether a sign-in exists is
+    /// unknown, so the last known state stands.
+    func resync() {
+        switch phase {
+        case .awaitingCode, .exchanging:
+            return
+        case .signedOut, .signedOutStaleScope, .signedIn, .failed:
+            break
+        }
         switch store.evaluate() {
         case .usable(let tokens):
             phase = .signedIn(expiresAt: tokens.expiresAt)
@@ -43,7 +59,15 @@ final class OAuthLoginController {
                 "cleared a stored grant with stale scope \(storedScope.isEmpty ? "<unrecorded>" : storedScope, privacy: .public)"
             )
         case .missing:
+            if case .signedIn = phase {
+                logger.notice("stored sign-in is gone; showing signed out")
+            }
+            if case .failed = phase, pending != nil {
+                return
+            }
             phase = .signedOut
+        case .unreadable(let status):
+            logger.error("couldn't read the stored sign-in (OSStatus \(status, privacy: .public)); keeping the last known state")
         }
     }
 

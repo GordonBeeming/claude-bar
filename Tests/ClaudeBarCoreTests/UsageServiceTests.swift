@@ -107,6 +107,20 @@ struct UsageServiceTests {
         #expect(await probe.claudeCodeReads == 0)
     }
 
+    @Test("An unreadable Keychain fails the poll without signing out")
+    func unreadableKeychainIsNotSignedOut() async {
+        let probe = Probe()
+        let service = Self.service(probe, selfContained: {
+            throw SelfContainedCredentialStore.StoreError.keychainUnavailable(status: Int(errSecInteractionNotAllowed))
+        })
+
+        await #expect(throws: SelfContainedCredentialStore.StoreError.keychainUnavailable(status: Int(errSecInteractionNotAllowed))) {
+            try await service.fetch(preferSelfContained: true)
+        }
+        #expect(await probe.clearedTokens.isEmpty)
+        #expect(await probe.claudeCodeReads == 0)
+    }
+
     @Test("Claude Code mode still reads Claude Code's token")
     func claudeCodeModeUnchanged() async throws {
         let probe = Probe()

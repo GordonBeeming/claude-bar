@@ -60,6 +60,79 @@ struct SelfContainedCredentialStoreTests {
         )
     }
 
+    @Test("Only 'not found' reads as signed out; any other Keychain failure is unknown, not signed out")
+    func readFailuresAreClassified() {
+        #expect(SelfContainedCredentialStore.readFailure(status: errSecSuccess) == nil)
+        #expect(SelfContainedCredentialStore.readFailure(status: errSecItemNotFound) == .missing)
+        #expect(
+            SelfContainedCredentialStore.readFailure(status: errSecInteractionNotAllowed)
+                == .unreadable(status: errSecInteractionNotAllowed)
+        )
+        #expect(SelfContainedCredentialStore.readFailure(status: errSecNotAvailable) == .unreadable(status: errSecNotAvailable))
+    }
+
+    private static func expired(access: String, refresh: String) -> OAuthTokens {
+        OAuthTokens(accessToken: access, refreshToken: refresh, expiresAt: Date().addingTimeInterval(-60), scope: OAuthConfig.scopes)
+    }
+
+    @Test("A rejected refresh clears that sign-in and reports it", .enabled(if: keychainAvailable))
+    func rejectedRefreshClearsAndThrows() async {
+        let service = "com.gordonbeeming.ClaudeBar.tests.refresh-rejected"
+        let seed = SelfContainedCredentialStore(service: service, revokeHandler: { _ in })
+        defer { seed.clear() }
+        #expect(seed.save(Self.expired(access: "at-old", refresh: "rt-old")))
+        let store = SelfContainedCredentialStore(
+            service: service,
+            revokeHandler: { _ in },
+            refresher: { _, _ in throw OAuthClient.OAuthError.http(400) }
+        )
+
+        await #expect(throws: SelfContainedCredentialStore.StoreError.grantRejected(status: 400)) {
+            try await store.validAccessToken()
+        }
+        #expect(store.load() == nil)
+    }
+
+    @Test("A rejected refresh uses a sign-in that replaced it meanwhile", .enabled(if: keychainAvailable))
+    func rejectedRefreshUsesReplacement() async throws {
+        let service = "com.gordonbeeming.ClaudeBar.tests.refresh-replaced"
+        let seed = SelfContainedCredentialStore(service: service, revokeHandler: { _ in })
+        defer { seed.clear() }
+        #expect(seed.save(Self.expired(access: "at-old", refresh: "rt-old")))
+        let fresh = Self.tokens(access: "at-new", refresh: "rt-new")
+        let store = SelfContainedCredentialStore(
+            service: service,
+            revokeHandler: { _ in },
+            refresher: { _, _ in
+                // The user signs in again while the old refresh is in flight.
+                _ = seed.save(fresh)
+                throw OAuthClient.OAuthError.http(401)
+            }
+        )
+
+        #expect(try await store.validAccessToken() == "at-new")
+        #expect(store.load() == fresh)
+    }
+
+    @Test("A network or server error on refresh keeps the sign-in", .enabled(if: keychainAvailable))
+    func transientRefreshFailureKeepsSignIn() async {
+        let service = "com.gordonbeeming.ClaudeBar.tests.refresh-transient"
+        let seed = SelfContainedCredentialStore(service: service, revokeHandler: { _ in })
+        defer { seed.clear() }
+        let old = Self.expired(access: "at-old", refresh: "rt-old")
+        #expect(seed.save(old))
+        let store = SelfContainedCredentialStore(
+            service: service,
+            revokeHandler: { _ in },
+            refresher: { _, _ in throw OAuthClient.OAuthError.http(503) }
+        )
+
+        await #expect(throws: OAuthClient.OAuthError.http(503)) {
+            try await store.validAccessToken()
+        }
+        #expect(store.load() == old)
+    }
+
     @Test("A rejected token clears the sign-in it came from", .enabled(if: keychainAvailable))
     func rejectedTokenClearsItsOwnSignIn() {
         let service = "com.gordonbeeming.ClaudeBar.tests.reject-own"
