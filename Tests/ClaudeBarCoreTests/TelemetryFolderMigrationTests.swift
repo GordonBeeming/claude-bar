@@ -140,6 +140,59 @@ struct TelemetryFolderUnreadableTests {
     }
 }
 
+/// Refuses to delete the half-merged source, the way a locked or busy file would.
+private final class StuckSourceFileManager: FileManager, @unchecked Sendable {
+    override func removeItem(at url: URL) throws {
+        if url.lastPathComponent.hasSuffix(".jsonl.merging") { throw CocoaError(.fileWriteNoPermission) }
+        try super.removeItem(at: url)
+    }
+}
+
+struct TelemetryFolderLeftoverTests {
+    @Test func aDirectoryNamedLikeAMigratedLeftoverIsReportedAndKept() throws {
+        let layout = try Layout()
+        let directory = layout.old.appending(path: "claudebar-logs-2026-10-01.jsonl.migrated", directoryHint: .isDirectory)
+        try layout.write("keep.txt", "mine", in: directory)
+
+        let outcome = TelemetryFolderMigration.migrate(home: layout.home)
+
+        #expect(outcome.failures.count == 1)
+        #expect(try layout.read("keep.txt", in: directory) == "mine")
+    }
+
+    @Test func aRegularMigratedLeftoverIsDeletedNotAppended() throws {
+        let layout = try Layout()
+        try layout.write("claudebar-logs-2026-10-01.jsonl", "a\n", in: layout.new)
+        try layout.write("claudebar-logs-2026-10-01.jsonl.migrated", "b\n")
+
+        let outcome = TelemetryFolderMigration.migrate(home: layout.home)
+
+        #expect(outcome.failures.isEmpty)
+        #expect(try layout.read("claudebar-logs-2026-10-01.jsonl") == "a\n")
+        #expect(!FileManager.default.fileExists(atPath: layout.old.path))
+    }
+
+    @Test func aFailedMarkerRenameAfterTheAppendNeverRestoresTheOriginalName() throws {
+        let layout = try Layout()
+        try layout.write("claudebar-logs-2026-10-01.jsonl", "a\n", in: layout.new)
+        try layout.write("claudebar-logs-2026-10-01.jsonl", "b\n")
+        // A directory squatting on the marker name makes the rename fail after the append.
+        let squatter = layout.old.appending(path: "claudebar-logs-2026-10-01.jsonl.migrated", directoryHint: .isDirectory)
+        try layout.write("keep.txt", "mine", in: squatter)
+
+        let first = TelemetryFolderMigration.migrate(home: layout.home, fileManager: StuckSourceFileManager())
+        #expect(!first.isComplete)
+        #expect(try layout.read("claudebar-logs-2026-10-01.jsonl") == "a\nb\n")
+        #expect(!layout.names(in: layout.old).contains("claudebar-logs-2026-10-01.jsonl"))
+
+        let second = TelemetryFolderMigration.migrate(home: layout.home)
+        #expect(try layout.read("claudebar-logs-2026-10-01.jsonl") == "a\nb\n")
+        #expect(layout.names(in: layout.old) == ["claudebar-logs-2026-10-01.jsonl.migrated"])
+        #expect(second.failures.count == 1)
+        #expect(try layout.read("keep.txt", in: squatter) == "mine")
+    }
+}
+
 struct TelemetryFolderLinkTests {
     private func outsideFile(_ layout: Layout) throws -> URL {
         let outside = layout.home.appending(path: "outside", directoryHint: .isDirectory)

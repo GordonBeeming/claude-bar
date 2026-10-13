@@ -56,11 +56,12 @@ public enum TelemetryFolderMigration {
         }
         for name in names.sorted() {
             do {
-                let isSource = isSpecFileName(name) || name.removingSuffix(mergingSuffix).map(isSpecFileName) == true
-                // A link here would be carried to the destination by the move, and the sink would
-                // then write through it. It can't turn into a real file, so it is reported and
-                // left, not retried.
-                if isSource, !isRegularFile(legacy.appending(path: name), fileManager: fileManager) {
+                let isLeftover = leftoverSuffixes.contains { suffix in name.removingSuffix(suffix).map(isSpecFileName) == true }
+                // A link would be carried to the destination by the move, and the sink would then
+                // write through it; a directory would be deleted along with everything in it. Such
+                // an entry can't turn into a real file, so it is reported and left, not retried.
+                let isRecovery = name.removingSuffix(mergingSuffix).map(isSpecFileName) == true
+                if isSpecFileName(name) || isRecovery || isLeftover, !isRegularFile(legacy.appending(path: name), fileManager: fileManager) {
                     outcome.failures.append("\(name) is not a regular file, so it was left alone")
                     continue
                 }
@@ -70,7 +71,7 @@ public enum TelemetryFolderMigration {
                     // A run that stopped mid-merge. The append may or may not have landed, and
                     // a repeated line is better than a lost one, so it is merged again.
                     try merge(source: legacy.appending(path: name), base: base, from: legacy, to: destination, fileManager: fileManager)
-                } else if let base = name.removingSuffix(mergedSuffix), isSpecFileName(base) {
+                } else if isLeftover {
                     // Fully appended; only the delete failed last time. Never append it again.
                     try fileManager.removeItem(at: legacy.appending(path: name))
                 } else {
@@ -115,6 +116,10 @@ public enum TelemetryFolderMigration {
     // Neither suffix matches the spec pattern, so the sink and the pruner never touch them.
     private static let mergingSuffix = ".merging"
     private static let mergedSuffix = ".migrated"
+    /// Where a source is parked when the `.migrated` rename and the delete both failed after a
+    /// successful append: finished, so a retry only cleans it up.
+    private static let parkedSuffix = ".appended"
+    private static let leftoverSuffixes = [mergedSuffix, parkedSuffix]
 
     private static func relocate(_ name: String, from legacy: URL, to destination: URL, fileManager: FileManager) throws {
         try FileTelemetrySink.createFolderIfNeeded(destination)
@@ -127,22 +132,43 @@ public enum TelemetryFolderMigration {
         let merging = legacy.appending(path: name + mergingSuffix)
         try fileManager.moveItem(at: source, to: merging)
         do {
-            try merge(source: merging, base: name, from: legacy, to: destination, fileManager: fileManager)
+            try append(source: merging, base: name, to: destination, fileManager: fileManager)
         } catch {
+            // Nothing was appended, so the file goes back under its own name.
             try? fileManager.moveItem(at: merging, to: source)
             throw error
         }
+        // Past this point the lines are in the destination; the name must never go back.
+        try retire(source: merging, base: name, in: legacy, fileManager: fileManager)
     }
 
-    /// Appends the source's whole lines to the destination file, then renames it to a name that
-    /// marks it as already appended before deleting it, so a failed delete can't cause a second
-    /// append on the next launch.
     private static func merge(source: URL, base: String, from legacy: URL, to destination: URL, fileManager: FileManager) throws {
+        try append(source: source, base: base, to: destination, fileManager: fileManager)
+        try retire(source: source, base: base, in: legacy, fileManager: fileManager)
+    }
+
+    private static func append(source: URL, base: String, to destination: URL, fileManager: FileManager) throws {
         try FileTelemetrySink.createFolderIfNeeded(destination)
         try requireRegularIfPresent(destination.appending(path: base), fileManager: fileManager)
         try appendWholeLines(of: source, to: destination.appending(path: base))
+    }
+
+    /// Takes an already-appended source out of the way without a state a retry would append
+    /// again: rename to a marker name then delete, else delete outright, else park it under a
+    /// second marker name. Only if all of those fail does the `.merging` name stay.
+    private static func retire(source: URL, base: String, in legacy: URL, fileManager: FileManager) throws {
         let merged = legacy.appending(path: base + mergedSuffix)
-        try fileManager.moveItem(at: source, to: merged)
+        do {
+            try fileManager.moveItem(at: source, to: merged)
+        } catch {
+            do {
+                try fileManager.removeItem(at: source)
+                return
+            } catch {
+                try fileManager.moveItem(at: source, to: legacy.appending(path: base + parkedSuffix))
+            }
+            throw error
+        }
         try fileManager.removeItem(at: merged)
     }
 
