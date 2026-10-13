@@ -96,6 +96,103 @@ private final class FlakyRemovalFileManager: FileManager, @unchecked Sendable {
     }
 }
 
+/// Reads of the old folder fail the way they do when the person has denied Documents access.
+private final class DeniedReadFileManager: FileManager, @unchecked Sendable {
+    var denyAttributes = false
+
+    override func contentsOfDirectory(atPath path: String) throws -> [String] {
+        throw CocoaError(.fileReadNoPermission)
+    }
+
+    override func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any] {
+        if denyAttributes { throw CocoaError(.fileReadNoPermission) }
+        return try super.attributesOfItem(atPath: path)
+    }
+}
+
+struct TelemetryFolderUnreadableTests {
+    @Test func aFolderThatCannotBeListedIsNotCompleteSoALaterLaunchRetries() throws {
+        let layout = try Layout()
+        try layout.write("claudebar-logs-2026-10-01.jsonl", "l\n")
+
+        let outcome = TelemetryFolderMigration.migrate(home: layout.home, fileManager: DeniedReadFileManager())
+
+        #expect(!outcome.isComplete)
+        #expect(outcome.failures.count == 1)
+        #expect(layout.names(in: layout.old) == ["claudebar-logs-2026-10-01.jsonl"])
+    }
+
+    @Test func aFolderWhoseAttributesCannotBeReadIsNotComplete() throws {
+        let layout = try Layout()
+        let manager = DeniedReadFileManager()
+        manager.denyAttributes = true
+
+        let outcome = TelemetryFolderMigration.migrate(home: layout.home, fileManager: manager)
+
+        #expect(!outcome.isComplete)
+        #expect(outcome.failures.count == 1)
+    }
+
+    @Test func aMissingFolderIsComplete() throws {
+        let layout = try Layout(createOld: false)
+
+        #expect(TelemetryFolderMigration.migrate(home: layout.home, fileManager: DeniedReadFileManager()) == .init())
+    }
+}
+
+struct TelemetryFolderLinkTests {
+    private func outsideFile(_ layout: Layout) throws -> URL {
+        let outside = layout.home.appending(path: "outside", directoryHint: .isDirectory)
+        try layout.write("secret.txt", "keep\n", in: outside)
+        return outside.appending(path: "secret.txt")
+    }
+
+    @Test func aSymlinkNamedLikeATelemetryFileIsNeverMoved() throws {
+        let layout = try Layout()
+        let target = try outsideFile(layout)
+        let link = layout.old.appending(path: "claudebar-logs-2026-10-01.jsonl")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        let outcome = TelemetryFolderMigration.migrate(home: layout.home)
+
+        #expect(outcome.failures.count == 1)
+        #expect(layout.names(in: layout.new).isEmpty)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == target.path)
+        #expect(try String(contentsOf: target, encoding: .utf8) == "keep\n")
+    }
+
+    @Test func aSymlinkLeftAsAMergingFileIsNeverMerged() throws {
+        let layout = try Layout()
+        let target = try outsideFile(layout)
+        try layout.write("claudebar-logs-2026-10-01.jsonl", "a\n", in: layout.new)
+        try FileManager.default.createSymbolicLink(
+            at: layout.old.appending(path: "claudebar-logs-2026-10-01.jsonl.merging"), withDestinationURL: target
+        )
+
+        let outcome = TelemetryFolderMigration.migrate(home: layout.home)
+
+        #expect(outcome.failures.count == 1)
+        #expect(try layout.read("claudebar-logs-2026-10-01.jsonl") == "a\n")
+    }
+
+    @Test func aDestinationThatIsASymlinkIsNeverWrittenThrough() throws {
+        let layout = try Layout()
+        let target = try outsideFile(layout)
+        try FileManager.default.createDirectory(at: layout.new, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: layout.new.appending(path: "claudebar-logs-2026-10-01.jsonl"), withDestinationURL: target
+        )
+        try layout.write("claudebar-logs-2026-10-01.jsonl", "l\n")
+
+        let outcome = TelemetryFolderMigration.migrate(home: layout.home)
+
+        #expect(outcome.failures.count == 1)
+        #expect(!outcome.isComplete)
+        #expect(try String(contentsOf: target, encoding: .utf8) == "keep\n")
+        #expect(try layout.read("claudebar-logs-2026-10-01.jsonl", in: layout.old) == "l\n")
+    }
+}
+
 struct TelemetryFolderMergeTests {
     @Test func appendsOnlyWholeLinesWhenTheSameNameAlreadyExistsAtTheDestination() throws {
         let layout = try Layout()

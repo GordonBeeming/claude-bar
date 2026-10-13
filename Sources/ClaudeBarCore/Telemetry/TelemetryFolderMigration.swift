@@ -29,15 +29,41 @@ public enum TelemetryFolderMigration {
         // attributesOfItem doesn't follow links, so a symlinked root is seen as one. Documents
         // is user-writable, so a link there could point the move at, and the clean-up at, a
         // folder this app has no business in. It never becomes eligible, so don't retry it.
-        guard let attributes = try? fileManager.attributesOfItem(atPath: legacy.path) else { return outcome }
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try fileManager.attributesOfItem(atPath: legacy.path)
+        } catch {
+            // Absent is the normal case for a new install. Any other failure (access denied, say)
+            // means the folder couldn't be checked, so a later launch has to look again.
+            if !isMissing(error) {
+                outcome.failures.append("\(legacy.path): \(error.localizedDescription)")
+                outcome.isComplete = false
+            }
+            return outcome
+        }
         guard attributes[.type] as? FileAttributeType == .typeDirectory else {
             outcome.failures.append("\(legacy.path) is not a plain folder, so it was left alone")
             return outcome
         }
 
-        guard let names = try? fileManager.contentsOfDirectory(atPath: legacy.path) else { return outcome }
+        let names: [String]
+        do {
+            names = try fileManager.contentsOfDirectory(atPath: legacy.path)
+        } catch {
+            outcome.failures.append("\(legacy.path): \(error.localizedDescription)")
+            outcome.isComplete = false
+            return outcome
+        }
         for name in names.sorted() {
             do {
+                let isSource = isSpecFileName(name) || name.removingSuffix(mergingSuffix).map(isSpecFileName) == true
+                // A link here would be carried to the destination by the move, and the sink would
+                // then write through it. It can't turn into a real file, so it is reported and
+                // left, not retried.
+                if isSource, !isRegularFile(legacy.appending(path: name), fileManager: fileManager) {
+                    outcome.failures.append("\(name) is not a regular file, so it was left alone")
+                    continue
+                }
                 if isSpecFileName(name) {
                     try relocate(name, from: legacy, to: destination, fileManager: fileManager)
                 } else if let base = name.removingSuffix(mergingSuffix), isSpecFileName(base) {
@@ -93,7 +119,8 @@ public enum TelemetryFolderMigration {
     private static func relocate(_ name: String, from legacy: URL, to destination: URL, fileManager: FileManager) throws {
         try FileTelemetrySink.createFolderIfNeeded(destination)
         let source = legacy.appending(path: name)
-        guard fileManager.fileExists(atPath: destination.appending(path: name).path) else {
+        try requireRegularIfPresent(destination.appending(path: name), fileManager: fileManager)
+        guard (try? fileManager.attributesOfItem(atPath: destination.appending(path: name).path)) != nil else {
             try fileManager.moveItem(at: source, to: destination.appending(path: name))
             return
         }
@@ -112,6 +139,7 @@ public enum TelemetryFolderMigration {
     /// append on the next launch.
     private static func merge(source: URL, base: String, from legacy: URL, to destination: URL, fileManager: FileManager) throws {
         try FileTelemetrySink.createFolderIfNeeded(destination)
+        try requireRegularIfPresent(destination.appending(path: base), fileManager: fileManager)
         try appendWholeLines(of: source, to: destination.appending(path: base))
         let merged = legacy.appending(path: base + mergedSuffix)
         try fileManager.moveItem(at: source, to: merged)
@@ -132,6 +160,36 @@ public enum TelemetryFolderMigration {
             throw error
         }
         try handle.close()
+    }
+
+    /// Doesn't follow links: a symlink reports as one rather than as its target.
+    private static func isRegularFile(_ url: URL, fileManager: FileManager) -> Bool {
+        (try? fileManager.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType == .typeRegular
+    }
+
+    /// A destination that is already there must be a regular file before anything is appended
+    /// to it. A missing one is fine; the caller moves the file into place instead.
+    private static func requireRegularIfPresent(_ url: URL, fileManager: FileManager) throws {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path) else { return }
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw MigrationError.destinationNotRegular(url.lastPathComponent)
+        }
+    }
+
+    private enum MigrationError: LocalizedError {
+        case destinationNotRegular(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .destinationNotRegular(let name): "\(name) in the new folder is not a regular file"
+            }
+        }
+    }
+
+    private static func isMissing(_ error: Error) -> Bool {
+        let cocoa = error as? CocoaError
+        if cocoa?.code == .fileNoSuchFile || cocoa?.code == .fileReadNoSuchFile { return true }
+        return (error as NSError).domain == NSPOSIXErrorDomain && (error as NSError).code == Int(ENOENT)
     }
 
     /// Finder litters folders with `.DS_Store`; it alone doesn't make the folder worth keeping.
