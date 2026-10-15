@@ -237,7 +237,7 @@ struct SettingsView: View {
     /// Shown before the user starts a sign-in, because the consent screen names Claude Code
     /// rather than ClaudeBar and that's alarming without warning.
     private var signInDisclosure: some View {
-        Text("The browser will say **Claude Code** — Anthropic doesn't publish a third-party OAuth client for the usage endpoint, so ClaudeBar signs in as the CLI does. It asks for `\(OAuthConfig.scopes)` and nothing else, so it can't create API keys for your organisation. Both tokens live in ClaudeBar's own Keychain item: the access token is only ever sent to the usage endpoint, the refresh token only to Anthropic's token and revoke endpoints.")
+        Text("The browser will say **Claude Code** — Anthropic doesn't publish a third-party OAuth client for the usage endpoint, so ClaudeBar signs in as the CLI does. It asks for `\(OAuthConfig.scopes)` and nothing else, so it can't create API keys for your organisation. Both tokens live in ClaudeBar's own Keychain item: the access token is sent only to Anthropic's usage and account endpoints (the organisation lookup and the guest-pass and credit offers), the refresh token only to Anthropic's token and revoke endpoints.")
             .font(.caption)
             .foregroundStyle(.secondary)
     }
