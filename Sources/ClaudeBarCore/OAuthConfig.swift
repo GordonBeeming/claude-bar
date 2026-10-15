@@ -20,13 +20,12 @@ public enum OAuthConfig {
     /// The redirect the client is registered against; its page displays the code to paste.
     public static let redirectURI = "https://platform.claude.com/oauth/code/callback"
 
-    /// The only scope the usage endpoint needs — verified against the live endpoints, not read
-    /// off the CLI. With `user:profile` alone, exchange/usage/refresh all return 200 with a
-    /// populated `limits`, and the server echoes the scope back rather than widening the grant
-    /// to this client's registered set. The old value mirrored the CLI's; its
-    /// `org:create_api_key` let this Keychain item mint organization API keys, to render a
-    /// percentage. Don't widen without re-testing live.
-    public static let scopes = "user:profile"
+    /// What the usage endpoint needs. `user:profile` alone was enough when it was tested, then
+    /// the endpoint started refusing it while the CLI's grant, which also carries
+    /// `user:inference`, kept getting 200. `org:create_api_key` stays out: it would let this
+    /// Keychain item mint organization API keys, to render a percentage. Don't change without
+    /// testing the usage endpoint live.
+    public static let scopes = "user:profile user:inference"
 
     /// Revoking here actually retires a grant. Deleting our Keychain item only drops our copy.
     public static let revokeURL = URL(string: "https://platform.claude.com/v1/oauth/token/revoke")!

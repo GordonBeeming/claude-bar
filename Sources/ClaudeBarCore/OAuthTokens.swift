@@ -36,14 +36,14 @@ public struct OAuthTokens: Codable, Sendable, Equatable {
         scope = try container.decodeIfPresent(String.self, forKey: .scope) ?? Self.unknownScope
     }
 
-    /// True when a stored grant is one this build wouldn't ask for today — unknown, or wider
-    /// than we now request, which is how an existing `org:create_api_key` token gets caught.
-    /// Equal-or-narrower is kept: re-authing someone already tighter than needed is churn for
-    /// no gain. Compared as sets, so scope order never forces a spurious reset.
+    /// True when a stored grant isn't exactly what this build asks for: unknown, wider (an old
+    /// `org:create_api_key` token), or narrower (a `user:profile`-only token the usage endpoint
+    /// now refuses). A stale grant is retired and the user signs in again, which beats a sign-in
+    /// that fails every poll. Compared as sets, so scope order never forces a spurious reset.
     public static func isStale(storedScope: String, requestedScope: String) -> Bool {
         let stored = Set(storedScope.split(separator: " ").map(String.init))
         guard !stored.isEmpty else { return true }
-        return !stored.isSubset(of: Set(requestedScope.split(separator: " ").map(String.init)))
+        return stored != Set(requestedScope.split(separator: " ").map(String.init))
     }
 }
 
