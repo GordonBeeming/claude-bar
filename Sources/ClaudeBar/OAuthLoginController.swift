@@ -65,6 +65,11 @@ final class OAuthLoginController {
             if case .failed = phase, pending != nil {
                 return
             }
+            // The stale-scope retirement already deleted the item, so a later re-read finds
+            // nothing; keep the phase that explains why until the user signs in again.
+            if phase == .signedOutStaleScope {
+                return
+            }
             phase = .signedOut
         case .unreadable(let status):
             logger.error("couldn't read the stored sign-in (OSStatus \(status, privacy: .public)); keeping the last known state")

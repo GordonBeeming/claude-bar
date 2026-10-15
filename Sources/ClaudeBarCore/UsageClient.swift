@@ -46,3 +46,17 @@ public struct UsageClient: Sendable {
         return request
     }
 }
+
+/// Without this the menu and the log only say "The operation couldn't be completed", which
+/// hides the status that says what actually went wrong.
+extension UsageClient.UsageError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .noToken: return "Claude Code credentials not found"
+        case .unauthorized: return "Anthropic rejected the token (HTTP 401)"
+        case .signedOut: return "Signed out"
+        case .http(-1): return "No HTTP response from Anthropic"
+        case .http(let status): return "Anthropic answered HTTP \(status)"
+        }
+    }
+}

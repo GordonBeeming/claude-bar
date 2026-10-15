@@ -37,7 +37,7 @@ struct OAuthURLTests {
         // Pinned as a literal rather than compared to OAuthConfig.scopes: this is the
         // assertion that has to fail if someone widens the constant, and comparing the
         // constant to itself would let any change through.
-        #expect(params["scope"] == "user:profile")
+        #expect(params["scope"] == "user:profile user:inference")
         #expect(params["code_challenge"] == "CHAL")
         #expect(params["code_challenge_method"] == "S256")
         #expect(params["state"] == "STATE")
@@ -47,9 +47,10 @@ struct OAuthURLTests {
 
 struct OAuthScopeTests {
     @Test func requestsOnlyWhatTheUsageEndpointNeeds() {
-        // `user:profile` was verified live as sufficient for GET /api/oauth/usage. See the
-        // note on OAuthConfig.scopes before changing this.
-        #expect(OAuthConfig.scopes == "user:profile")
+        // `user:profile` alone stopped working for GET /api/oauth/usage; the CLI's token,
+        // which also carries `user:inference`, still gets 200. See the note on
+        // OAuthConfig.scopes before changing this.
+        #expect(OAuthConfig.scopes == "user:profile user:inference")
     }
 
     @Test func neverRequestsApiKeyCreation() {
@@ -124,7 +125,7 @@ struct OAuthTokenResponseTests {
 }
 
 struct OAuthScopeStalenessTests {
-    private let requested = "user:profile"
+    private let requested = "user:profile user:inference"
 
     @Test func unknownScopeIsStale() {
         #expect(OAuthTokens.isStale(storedScope: OAuthTokens.unknownScope, requestedScope: requested))
@@ -139,17 +140,17 @@ struct OAuthScopeStalenessTests {
     }
 
     @Test func anyExtraScopeIsStale() {
-        #expect(OAuthTokens.isStale(storedScope: "user:profile user:inference", requestedScope: requested))
+        #expect(OAuthTokens.isStale(storedScope: "user:profile user:inference user:sessions", requestedScope: requested))
     }
 
     @Test func matchingScopeIsKept() {
-        #expect(!OAuthTokens.isStale(storedScope: "user:profile", requestedScope: requested))
+        #expect(!OAuthTokens.isStale(storedScope: "user:profile user:inference", requestedScope: requested))
     }
 
-    @Test func narrowerScopeIsKept() {
-        // Re-signing in someone whose token is already tighter than we ask for would be
-        // churn for no security gain.
-        #expect(!OAuthTokens.isStale(storedScope: "user:profile", requestedScope: "user:profile user:inference"))
+    @Test func narrowerScopeIsStale() {
+        // A grant missing a scope the usage endpoint needs fails every poll, so it's retired
+        // and the user signs in again rather than staying silently broken.
+        #expect(OAuthTokens.isStale(storedScope: "user:profile", requestedScope: requested))
     }
 
     @Test func scopeOrderIsIrrelevant() {
