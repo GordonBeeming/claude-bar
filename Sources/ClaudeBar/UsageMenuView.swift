@@ -52,6 +52,10 @@ struct UsageMenuView: View {
             .padding()
             .frame(width: 320)
         }
+        // MenuBarExtra keeps the window height it first measured, so without this the
+        // popover never shrinks when a Window disappears and leaves empty space below.
+        // Applied outside the TimelineView so the window tracks whatever it renders.
+        .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             model.refreshIfStale()
         }
