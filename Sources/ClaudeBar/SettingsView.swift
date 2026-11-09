@@ -18,7 +18,10 @@ struct SettingsView: View {
                     login: login.controller(for: account.account),
                     onIdentityChange: { Task { await model.refreshAll() } },
                     isExtraFolder: settings.extraAccountFolders.contains(account.account.configDir.standardizedFileURL.path),
-                    onRemove: { settings.removeExtraAccountFolder(account.account.configDir.standardizedFileURL.path) }
+                    onRemove: {
+                        settings.removeExtraAccountFolder(account.account.configDir.standardizedFileURL.path)
+                        Task { await model.refreshAll() }
+                    }
                 )
             }
 

@@ -24,11 +24,13 @@ public struct IdentityChangeDetector: Sendable, Equatable {
 
     private var source: String
     private var email: String?
+    private var organization: String?
     private var revision: Int
 
-    public init(source: String, email: String?, revision: Int = 0) {
+    public init(source: String, email: String?, organization: String? = nil, revision: Int = 0) {
         self.source = source
         self.email = email
+        self.organization = organization
         self.revision = revision
     }
 
@@ -45,13 +47,17 @@ public struct IdentityChangeDetector: Sendable, Equatable {
     public mutating func markReplaced() {
         source = ""
         email = nil
+        organization = nil
     }
 
-    public mutating func observe(source newSource: String, email newEmail: String?) -> Change {
-        guard newSource != source || newEmail != email else { return .none }
-        let labelling = newSource == source && email == nil
+    /// The organisation counts: the same email on another organisation has other limits and
+    /// offers. It is only "labelling" when what was unknown becomes known.
+    public mutating func observe(source newSource: String, email newEmail: String?, organization newOrganization: String? = nil) -> Change {
+        guard newSource != source || newEmail != email || newOrganization != organization else { return .none }
+        let labelling = newSource == source && (email == nil || (newEmail == email && organization == nil))
         source = newSource
         email = newEmail
+        organization = newOrganization
         return labelling ? .labelled : .replaced
     }
 }

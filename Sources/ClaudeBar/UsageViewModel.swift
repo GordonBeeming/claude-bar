@@ -96,17 +96,15 @@ final class UsageViewModel {
         let result = await runDiscovery()
         reconcile(with: result.accounts)
 
-        // Accounts on their own sign-in are labelled by that sign-in, looked up through the
-        // account's own single-flight refresh.
-        await withTaskGroup(of: Void.self) { group in
-            for model in accounts {
-                group.addTask { await model.refreshSelfContainedIdentity() }
-            }
-        }
-
+        // Per account: identity first (accounts on their own sign-in are labelled by it, looked
+        // up through the account's own single-flight refresh), then usage. Accounts run side by
+        // side, so one stalled lookup delays only its own account.
         let reactions = await withTaskGroup(of: Set<ReactionChoice>.self) { group in
             for model in accounts {
-                group.addTask { await model.refresh() }
+                group.addTask {
+                    await model.refreshSelfContainedIdentity()
+                    return await model.refresh()
+                }
             }
             var all: Set<ReactionChoice> = []
             for await reactions in group { all.formUnion(reactions) }

@@ -54,20 +54,20 @@ final class AccountUsageModel: Identifiable {
     @ObservationIgnored private var previousSnapshots: [String: LimitSnapshot] = [:]
     @ObservationIgnored private var hasSeededCelebrations = false
     @ObservationIgnored weak var settings: AppSettings? {
-        didSet {
-            // The model can be built before settings exist (assuming the Claude Code source);
-            // once they do, a self-contained account must not keep the profile's label.
-            if credentialSource == .selfContained, selfContainedIdentity == nil, account.email != nil {
-                account = account.withIdentity(email: nil, organization: nil)
-            }
-        }
+        // The model can be built before settings exist (assuming the Claude Code source); once
+        // they do, the label for the real source is applied at once.
+        didSet { syncIdentity() }
     }
+    /// What discovery last said about the folder (the Claude Code profile's label). The label
+    /// shown is derived from this and the current source, never carried over from another source.
+    @ObservationIgnored private var profileAccount: ClaudeAccount
 
     init(account: ClaudeAccount, settings: AppSettings?) {
         self.id = account.id
         let source = settings?.credentialSource(for: account.id) ?? .claudeCode
         // A self-contained account is labelled by its own sign-in, never by the folder's Claude
         // Code profile, so it starts unlabelled until that identity is known.
+        self.profileAccount = account
         self.account = source == .selfContained ? account.withIdentity(email: nil, organization: nil) : account
         self.settings = settings
         let service = UsageService(account: account)
@@ -76,6 +76,7 @@ final class AccountUsageModel: Identifiable {
         self.detector = IdentityChangeDetector(
             source: source.rawValue,
             email: source == .selfContained ? nil : account.email,
+            organization: source == .selfContained ? nil : account.organization,
             revision: SelfContainedCredentialStore.revision(for: account)
         )
     }
@@ -89,11 +90,19 @@ final class AccountUsageModel: Identifiable {
             selfContainedIdentity = nil
             bumpGeneration()
         }
-        let labelled = credentialSource == .selfContained
-            ? updated.withIdentity(email: selfContainedIdentity?.email, organization: selfContainedIdentity?.organization)
-            : updated
-        if labelled != account { account = labelled }
+        profileAccount = updated
         syncIdentity()
+    }
+
+    /// The label the current source calls for: our own sign-in's identity when self-contained
+    /// (nothing until it is known), the folder's Claude Code profile otherwise. Applied before
+    /// anything else reads the account, so a source change never keeps the old source's name.
+    private func applyLabel() {
+        if credentialSource != .selfContained { selfContainedIdentity = nil }
+        let wanted = credentialSource == .selfContained
+            ? profileAccount.withIdentity(email: selfContainedIdentity?.email, organization: selfContainedIdentity?.organization)
+            : profileAccount
+        if wanted != account { account = wanted }
     }
 
     /// Looks up who our own sign-in belongs to. Unknown (no sign-in, or the lookup failed) keeps
@@ -106,8 +115,6 @@ final class AccountUsageModel: Identifiable {
         syncIdentity()
         guard let identity, started == generation, credentialSource == .selfContained else { return }
         selfContainedIdentity = identity
-        let labelled = account.withIdentity(email: identity.email, organization: identity.organization)
-        if labelled != account { account = labelled }
         syncIdentity()
     }
 
@@ -120,14 +127,12 @@ final class AccountUsageModel: Identifiable {
             // The sign-in was removed or replaced. Whoever it was before is no longer who this
             // is, whether or not the new one's identity can be looked up.
             selfContainedIdentity = nil
-            if account.email != nil || account.organization != nil {
-                account = account.withIdentity(email: nil, organization: nil)
-            }
-            // Treated as a different identity even if the email below reads as unchanged.
+            // Treated as a different identity even if the label below reads as unchanged.
             detector.markReplaced()
             replaced = true
         }
-        if detector.observe(source: credentialSource.rawValue, email: account.email) == .replaced {
+        applyLabel()
+        if detector.observe(source: credentialSource.rawValue, email: account.email, organization: account.organization) == .replaced {
             replaced = true
         }
         if replaced { bumpGeneration() }
@@ -155,9 +160,18 @@ final class AccountUsageModel: Identifiable {
     /// play one effect when several accounts reset in the same tick.
     @discardableResult
     func refresh() async -> Set<ReactionChoice> {
+        let first = await performRefresh()
+        guard first.dropped else { return first.reactions }
+        // The answer was about a sign-in that has since gone (a 401 clears it, which moves the
+        // generation). Ask again for the current one, so the menu says "signed out" rather than
+        // sitting on "Loading usage…".
+        return await performRefresh().reactions
+    }
+
+    private func performRefresh() async -> (reactions: Set<ReactionChoice>, dropped: Bool) {
         syncIdentity()
         let started = generation
-        guard refreshingGeneration != started else { return [] }
+        guard refreshingGeneration != started else { return ([], false) }
         refreshingGeneration = started
         inFlight += 1
         defer {
@@ -173,7 +187,7 @@ final class AccountUsageModel: Identifiable {
             syncIdentity()
             guard started == generation else {
                 logger.notice("dropped a usage response for \(self.account.id, privacy: .public): the account changed meanwhile")
-                return []
+                return ([], true)
             }
             limits = response.limits
             lastResponse = response
@@ -181,10 +195,10 @@ final class AccountUsageModel: Identifiable {
             lastUpdated = Date()
             authState = .ok
             lastError = nil
-            return celebrations(for: response.limits, now: Date())
+            return (celebrations(for: response.limits, now: Date()), false)
         } catch {
             syncIdentity()
-            guard started == generation else { return [] }
+            guard started == generation else { return ([], true) }
             switch error {
             case UsageClient.UsageError.unauthorized:
                 authState = .tokenExpired
@@ -200,7 +214,7 @@ final class AccountUsageModel: Identifiable {
                 lastError = "Couldn't refresh: \(error.localizedDescription)"
             }
         }
-        return []
+        return ([], false)
     }
 
     func isStale(threshold: TimeInterval) -> Bool {

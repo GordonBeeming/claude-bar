@@ -23,6 +23,7 @@ final class TelemetryController {
         let generation: Int
         let source: CredentialSource
         let email: String?
+        let organization: String?
         /// Whether the recorder's state has been checked against this tracker's owner.
         var adopted = false
         /// Set when this tracker replaced one from an earlier generation: a different sign-in
@@ -31,14 +32,17 @@ final class TelemetryController {
         var lastOffersFetch: (at: Date, source: CredentialSource)?
         var lastOffers = AccountOffers()
 
-        init(recorder: TelemetryRecorder, generation: Int, source: CredentialSource, email: String?) {
+        init(recorder: TelemetryRecorder, generation: Int, source: CredentialSource, email: String?, organization: String?) {
             self.recorder = recorder
             self.generation = generation
             self.source = source
             self.email = email
+            self.organization = organization
         }
 
-        var owner: String { "\(source.rawValue)|\(email ?? "")" }
+        /// The organisation is part of it: the same email on another organisation has other
+        /// limits and offers.
+        var owner: String { "\(source.rawValue)|\(email ?? "")|\(organization ?? "")" }
     }
 
     private let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "Telemetry")
@@ -66,7 +70,8 @@ final class TelemetryController {
         let account = model.account
         let source = model.credentialSource
         let existing = trackers[account.id]
-        if let existing, existing.generation == model.generation, existing.source == source, existing.email == account.email {
+        if let existing, existing.generation == model.generation, existing.source == source,
+           existing.email == account.email, existing.organization == account.organization {
             return (existing, false)
         }
         let recorder = TelemetryRecorder(
@@ -75,10 +80,13 @@ final class TelemetryController {
             resource: account.telemetryResource(version: version, hostName: ProcessInfo.processInfo.hostName),
             scope: OTLP.Scope(name: "com.gordonbeeming.ClaudeBar.telemetry", version: version)
         )
-        let created = Tracker(recorder: recorder, generation: model.generation, source: source, email: account.email)
+        let created = Tracker(
+            recorder: recorder, generation: model.generation, source: source,
+            email: account.email, organization: account.organization
+        )
         // An email going from unknown to known within one generation is the same sign-in being
         // labelled, so what was fetched for it still applies.
-        if let existing, existing.generation == model.generation, existing.source == source, existing.email == nil {
+        if let existing, existing.generation == model.generation, existing.source == source {
             created.lastOffers = existing.lastOffers
             created.lastOffersFetch = existing.lastOffersFetch
         }
@@ -96,6 +104,7 @@ final class TelemetryController {
             && account.generation == generation
             && account.credentialSource == tracker.source
             && account.account.email == tracker.email
+            && account.account.organization == tracker.organization
     }
 
     /// Idempotent, like `UsageViewModel.startPolling()`: the label's `.onAppear` can fire
@@ -187,6 +196,9 @@ final class TelemetryController {
 
     private func startCounting() async {
         for account in model?.accounts ?? [] {
+            // Opting out cancels this loop and clears the trackers; one created afterwards would
+            // write a baseline the opt-out never clears.
+            guard !Task.isCancelled, settings?.telemetryEnabled == true else { return }
             let (tracker, isNew) = tracker(for: account)
             if isNew { await startCounting(tracker) }
         }

@@ -8,6 +8,8 @@ struct UsageMenuView: View {
 
     @Environment(\.openSettings) private var openSettings
 
+    private static let maxSectionsHeight: CGFloat = 460
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             // The 1s tick only runs while this window is open, so live countdowns
@@ -27,11 +29,17 @@ struct UsageMenuView: View {
                     Divider()
                     rows(for: only, now: context.date)
                 } else {
-                    ForEach(Array(model.accounts.enumerated()), id: \.element.id) { index, account in
-                        if index > 0 {
-                            Divider()
+                    // Many accounts would push the footer off screen, so the sections scroll
+                    // once they pass a cap; header and footer stay put.
+                    CappedScrollView(maxHeight: Self.maxSectionsHeight) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(model.accounts.enumerated()), id: \.element.id) { index, account in
+                                if index > 0 {
+                                    Divider()
+                                }
+                                accountSection(account, now: context.date)
+                            }
                         }
-                        accountSection(account, now: context.date)
                     }
                 }
 
@@ -157,5 +165,34 @@ struct UsageMenuView: View {
         case .noToken: return "Claude Code credentials not found"
         case .signedOut: return "Signed out — sign in again in Settings"
         }
+    }
+}
+
+/// Scrolls its content once it is taller than `maxHeight`, and otherwise takes exactly the
+/// content's height, so a short list sizes the popover the way a plain stack would.
+private struct CappedScrollView<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder var content: Content
+    @State private var contentHeight: CGFloat?
+
+    var body: some View {
+        ScrollView {
+            content
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
+                    }
+                )
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(height: min(contentHeight ?? maxHeight, maxHeight))
+        .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
+    }
+}
+
+private struct ContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
