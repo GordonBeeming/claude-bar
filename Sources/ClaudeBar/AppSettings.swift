@@ -59,6 +59,32 @@ enum MenuBarPercentageSelection: Hashable {
     }
 }
 
+/// Which account the menu bar icon follows. Applies before `MenuBarPercentageSelection`,
+/// which then picks the limit within that scope.
+enum MenuBarAccountSelection: Hashable {
+    case mostUsed
+    case account(String)
+
+    private static let mostUsedRawValue = "mostUsed"
+    private static let accountRawValuePrefix = "account:"
+
+    init(rawValue: String?) {
+        guard let rawValue, rawValue.hasPrefix(Self.accountRawValuePrefix) else {
+            self = .mostUsed
+            return
+        }
+        let id = String(rawValue.dropFirst(Self.accountRawValuePrefix.count))
+        self = id.isEmpty ? .mostUsed : .account(id)
+    }
+
+    var rawValue: String {
+        switch self {
+        case .mostUsed: Self.mostUsedRawValue
+        case let .account(id): Self.accountRawValuePrefix + id
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AppSettings {
@@ -70,13 +96,22 @@ final class AppSettings {
         static let fuelTankMode = "fuelTankMode"
         static let showMenuBarFlame = "showMenuBarFlame"
         static let celebrationsEnabled = "celebrationsEnabled"
-        static let credentialSource = "credentialSource"
+        /// The pre-multi-account global choice. Still read as the fallback for an account that
+        /// has no choice of its own, which carries an existing install's choice over.
+        static let legacyCredentialSource = "credentialSource"
+        static let credentialSourcePrefix = "credentialSource."
+        static let extraAccountFolders = "extraAccountFolders"
+        static let menuBarAccountSelection = "menuBarAccountSelection"
+        static let accountIDsByPath = "accountIDsByPath"
         static let telemetryEnabled = "telemetryEnabled"
         static let telemetryIntervalMinutes = "telemetryIntervalMinutes"
         static let telemetryRetentionDays = "telemetryRetentionDays"
         static let telemetryDirectory = "telemetryDirectory"
         static let telemetryFolderMigrated = "telemetryFolderMigrated"
 
+        static func credentialSource(account id: String) -> String {
+            credentialSourcePrefix + id
+        }
         static func celebrationEnabled(_ trigger: CelebrationTrigger) -> String {
             "celebration.\(trigger.rawValue).enabled"
         }
@@ -119,10 +154,56 @@ final class AppSettings {
         didSet { defaults.set(celebrationsEnabled, forKey: Keys.celebrationsEnabled) }
     }
 
+    /// Only accounts the person has chosen a source for; the rest fall back to the legacy
+    /// global choice. Held here (not read from defaults on demand) so observation tracks it.
+    private var credentialSourceStore: [String: CredentialSource]
+    private let legacyCredentialSource: CredentialSource
+
     /// Defaults to `.claudeCode` so existing installs behave exactly as before; the user
-    /// opts into self-contained sign-in from Settings.
-    var credentialSource: CredentialSource {
-        didSet { defaults.set(credentialSource.rawValue, forKey: Keys.credentialSource) }
+    /// opts into self-contained sign-in per account from Settings.
+    func credentialSource(for accountID: String) -> CredentialSource {
+        credentialSourceStore[accountID] ?? legacyCredentialSource
+    }
+
+    func setCredentialSource(_ source: CredentialSource, for accountID: String) {
+        credentialSourceStore[accountID] = source
+        defaults.set(source.rawValue, forKey: Keys.credentialSource(account: accountID))
+    }
+
+    /// Folders added in Settings, beyond what discovery finds on its own.
+    private(set) var extraAccountFolders: [String]
+
+    func addExtraAccountFolder(_ url: URL) {
+        let path = url.standardizedFileURL.path
+        guard !extraAccountFolders.contains(path) else { return }
+        extraAccountFolders.append(path)
+        defaults.set(extraAccountFolders, forKey: Keys.extraAccountFolders)
+    }
+
+    func removeExtraAccountFolder(_ path: String) {
+        extraAccountFolders.removeAll { $0 == path }
+        defaults.set(extraAccountFolders, forKey: Keys.extraAccountFolders)
+    }
+
+    var extraAccountFolderURLs: [URL] {
+        extraAccountFolders.map { URL(filePath: $0, directoryHint: .isDirectory) }
+    }
+
+    /// Folder path to account id, assigned the first time a folder is seen. Ids feed Keychain
+    /// items, telemetry files and per-account settings, so they must stay with their folder.
+    private(set) var accountIDsByPath: [String: String]
+
+    /// Merge-only: a reservation is never dropped, and one already recorded for a path wins
+    /// over a different id offered for it, so a late result can't undo an assignment.
+    func recordAccountIDs(_ assignments: [String: String]) {
+        let merged = ClaudeAccountDiscovery.mergeIDs(existing: accountIDsByPath, new: assignments)
+        guard merged != accountIDsByPath else { return }
+        accountIDsByPath = merged
+        defaults.set(merged, forKey: Keys.accountIDsByPath)
+    }
+
+    var menuBarAccountSelection: MenuBarAccountSelection {
+        didSet { defaults.set(menuBarAccountSelection.rawValue, forKey: Keys.menuBarAccountSelection) }
     }
 
     /// Opt-in: nothing is written to disk until the user turns this on.
@@ -250,7 +331,8 @@ final class AppSettings {
             Keys.fuelTankMode: false,
             Keys.showMenuBarFlame: true,
             Keys.celebrationsEnabled: false,
-            Keys.credentialSource: CredentialSource.claudeCode.rawValue,
+            Keys.legacyCredentialSource: CredentialSource.claudeCode.rawValue,
+            Keys.menuBarAccountSelection: MenuBarAccountSelection.mostUsed.rawValue,
             Keys.telemetryEnabled: false,
             Keys.telemetryIntervalMinutes: Int(TelemetryConfig.defaultIntervalSeconds / 60),
             Keys.telemetryRetentionDays: TelemetryConfig.defaultRetentionDays,
@@ -271,8 +353,17 @@ final class AppSettings {
         fuelTankMode = defaults.bool(forKey: Keys.fuelTankMode)
         showMenuBarFlame = defaults.bool(forKey: Keys.showMenuBarFlame)
         celebrationsEnabled = defaults.bool(forKey: Keys.celebrationsEnabled)
-        credentialSource = defaults.string(forKey: Keys.credentialSource)
+        legacyCredentialSource = defaults.string(forKey: Keys.legacyCredentialSource)
             .flatMap(CredentialSource.init(rawValue:)) ?? .claudeCode
+        var sources: [String: CredentialSource] = [:]
+        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix(Keys.credentialSourcePrefix) {
+            guard let raw = value as? String, let source = CredentialSource(rawValue: raw) else { continue }
+            sources[String(key.dropFirst(Keys.credentialSourcePrefix.count))] = source
+        }
+        credentialSourceStore = sources
+        extraAccountFolders = defaults.stringArray(forKey: Keys.extraAccountFolders) ?? []
+        accountIDsByPath = defaults.dictionary(forKey: Keys.accountIDsByPath) as? [String: String] ?? [:]
+        menuBarAccountSelection = MenuBarAccountSelection(rawValue: defaults.string(forKey: Keys.menuBarAccountSelection))
 
         telemetryEnabled = defaults.bool(forKey: Keys.telemetryEnabled)
         // Any in-range value is kept, not just the pickers' presets: Bar UI can ask for one

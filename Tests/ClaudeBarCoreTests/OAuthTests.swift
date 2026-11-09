@@ -196,3 +196,50 @@ struct OAuthRefreshTimingTests {
         #expect(!OAuthClient.needsRefresh(expiresAt: now.addingTimeInterval(3600), now: now))
     }
 }
+
+struct OAuthIdentityTests {
+    @Test func tokenResponseCarriesWhoSignedIn() throws {
+        let json = #"{"access_token":"at","refresh_token":"rt","expires_in":3600,"scope":"user:profile","account":{"uuid":"u","email_address":"a@b.com"},"organization":{"uuid":"o","name":"Org"}}"#
+        let decoded = try JSONDecoder().decode(OAuthTokenResponse.self, from: Data(json.utf8))
+        #expect(decoded.account?.emailAddress == "a@b.com")
+        #expect(decoded.organization?.name == "Org")
+    }
+
+    @Test func tokenResponseWithoutIdentityStillDecodes() throws {
+        let json = #"{"access_token":"at","refresh_token":"rt","expires_in":3600}"#
+        let decoded = try JSONDecoder().decode(OAuthTokenResponse.self, from: Data(json.utf8))
+        #expect(decoded.account == nil)
+        #expect(decoded.organization == nil)
+    }
+
+    @Test func storedItemWithoutIdentityStillDecodes() throws {
+        let json = #"{"accessToken":"at","refreshToken":"rt","expiresAt":1000000,"scope":"user:profile"}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let tokens = try decoder.decode(OAuthTokens.self, from: Data(json.utf8))
+        #expect(tokens.accessToken == "at")
+        #expect(tokens.accountEmail == nil)
+        #expect(tokens.organizationName == nil)
+    }
+
+    @Test func identityRoundTripsAndCarriesAcrossARefresh() throws {
+        let original = OAuthTokens(
+            accessToken: "at", refreshToken: "rt", expiresAt: Date(timeIntervalSince1970: 1_000_000),
+            scope: "user:profile", accountEmail: "a@b.com", organizationName: "Org"
+        )
+        let decoded = try JSONDecoder().decode(OAuthTokens.self, from: JSONEncoder().encode(original))
+        #expect(decoded == original)
+
+        let refreshed = OAuthTokens(accessToken: "at2", refreshToken: "rt2", expiresAt: Date(), scope: "user:profile")
+        let carried = refreshed.carryingIdentity(from: original)
+        #expect(carried.accountEmail == "a@b.com")
+        #expect(carried.organizationName == "Org")
+        #expect(carried.accessToken == "at2")
+
+        // A refresh that does name someone wins over the stored value.
+        let renamed = OAuthTokens(
+            accessToken: "at3", refreshToken: "rt3", expiresAt: Date(), scope: "user:profile", accountEmail: "c@d.com"
+        )
+        #expect(renamed.carryingIdentity(from: original).accountEmail == "c@d.com")
+    }
+}

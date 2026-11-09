@@ -56,6 +56,24 @@ Open **Settings…** from the dropdown:
 - **Telemetry** — off by default. Turn it on to keep your own usage history on disk (see [Telemetry](#telemetry)).
 - **Launch at login** — on by default, toggle it here.
 
+## Multiple accounts
+
+ClaudeBar watches every Claude Code account it can find on the Mac. It looks in three places:
+
+- `~/.claude`, which is always there.
+- Each folder in `~/.claude-accounts/` that holds a `.claude.json`. This is where a second account lives when you start Claude Code with `CLAUDE_CONFIG_DIR=~/.claude-accounts/work`.
+- Any folder you add with **Settings → Accounts → Add folder…**.
+
+With one account the menu looks the same as it always has. With more, each account gets its own section headed by its email, with the organisation and last update underneath. New folders under `~/.claude-accounts/` show up within a minute, without a relaunch.
+
+Each account has its own **Token from** setting. A new account starts on whatever you had chosen before, so an install that used self-contained sign-in starts a second account signed out. Pick Claude Code's Keychain token or sign in again for that account. Self-contained sign-ins are stored per account.
+
+Claude Code keeps a separate Keychain item for each config folder, so macOS asks for Keychain access once per account when you use the Keychain token. The item for a non-default folder is named `Claude Code-credentials-` plus the first 8 hex characters of the SHA-256 of the folder's path.
+
+**Settings → Menu bar → Account** picks what the icon follows. **Most used** (the default) shows whichever account is closest to a limit. Pinning one account shows that account, and falls back to most used while it has no data. It only appears when there is more than one account.
+
+Telemetry records every account. The default account keeps `claudebar-metrics-<date>.jsonl`; any other account writes `claudebar.<account id>-metrics-<date>.jsonl` in the same folder. The account id is the folder name in lowercase, with anything outside `a-z`, `0-9` and `-` turned into `-`. Every request carries an `account.id` resource attribute (`default` for `~/.claude`), plus `account.name` with the email when it is known. The Telemetry spec version stays `1`.
+
 ## Telemetry
 
 ClaudeBar can write your usage history to disk in OpenTelemetry's OTLP JSON format, so you can chart it with `jq` and a spreadsheet or feed it into any OpenTelemetry tool. It's opt-in. Nothing is written until you tick **Record usage history** in Settings, and ClaudeBar never uploads the files. The folder is yours, though: if you choose one that syncs (Documents does when iCloud Desktop & Documents is on), the files sync with it.
@@ -147,7 +165,7 @@ macOS gates that read behind a consent prompt. Click **Always Allow** and macOS 
 
 ### Stop the prompt: self-contained sign-in
 
-**Settings → Usage data source → Self-contained sign-in** does its own OAuth login and stores the token in a Keychain item ClaudeBar created. Because ClaudeBar owns that item, macOS never runs the cross-app consent prompt, and Claude Code's rotations don't touch it — so the prompt stops.
+**Settings → Accounts → Token from → Self-contained sign-in** does its own OAuth login and stores the token in a Keychain item ClaudeBar created. Because ClaudeBar owns that item, macOS never runs the cross-app consent prompt, and Claude Code's rotations don't touch it — so the prompt stops.
 
 It works because ClaudeBar now holds its own token pair: refreshing rotates *its* refresh token, never Claude Code's, so the CLI stays logged in. That's the trap the obvious "just refresh the token ourselves" idea falls into — Anthropic's refresh tokens are single-use, so refreshing Claude Code's copy logs the CLI out (an unrelated menu bar app hit exactly that: [CodexBar #1161](https://github.com/steipete/CodexBar/issues/1161)). Doing our own login avoids it. In this mode ClaudeBar never reads Claude Code's Keychain item, so the prompt can't come back. If the sign-in ever stops working, the menu says so and you sign in again in Settings.
 

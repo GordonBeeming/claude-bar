@@ -55,10 +55,15 @@ public protocol TelemetrySink: Sendable {
     func prune(retentionDays: Int, now: Date) throws
 }
 
-public func makeSinks(_ configs: [TelemetrySinkConfig]) -> [any TelemetrySink] {
+/// `serviceName` is what an account's files are prefixed with, so accounts sharing a folder
+/// keep separate files.
+public func makeSinks(
+    _ configs: [TelemetrySinkConfig],
+    serviceName: String = FileTelemetrySink.defaultServiceName
+) -> [any TelemetrySink] {
     configs.map { config in
         switch config {
-        case .file(let directory): FileTelemetrySink(directory: directory)
+        case .file(let directory): FileTelemetrySink(directory: directory, serviceName: serviceName)
         }
     }
 }

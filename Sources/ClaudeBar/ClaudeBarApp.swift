@@ -7,7 +7,7 @@ struct ClaudeBarApp: App {
     @State private var model = UsageViewModel()
     @State private var settings = AppSettings()
     @State private var celebrations = CelebrationController()
-    @State private var login = OAuthLoginController()
+    @State private var login = AccountLoginControllers()
     @State private var telemetry = TelemetryController()
 
     init() {

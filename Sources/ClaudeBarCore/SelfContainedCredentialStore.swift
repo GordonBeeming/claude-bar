@@ -67,6 +67,10 @@ public struct SelfContainedCredentialStore: Sendable {
         }
     }
 
+    public init(account: ClaudeAccount, client: OAuthClient = OAuthClient()) {
+        self.init(service: account.selfContainedService, client: client)
+    }
+
     init(
         service: String,
         client: OAuthClient = OAuthClient(),
@@ -78,6 +82,18 @@ public struct SelfContainedCredentialStore: Sendable {
         self.revokeHandler = revokeHandler
         self.refresher = refresher ?? { try await client.refresh(refreshToken: $0, grantedScope: $1) }
     }
+
+    /// Goes up every time a sign-in is saved or removed (never on a token rotation, which keeps
+    /// the same sign-in). Held in memory per Keychain service, so every store value for one
+    /// account shares it; it exists so the app can tell "a different sign-in" from "the same one
+    /// refreshed" without needing the email lookup to succeed.
+    public var revision: Int { Self.revisions.value(for: service) }
+
+    public static func revision(for account: ClaudeAccount) -> Int {
+        revisions.value(for: account.selfContainedService)
+    }
+
+    private static let revisions = RevisionCounter()
 
     public var isSignedIn: Bool { load() != nil }
 
@@ -175,10 +191,15 @@ public struct SelfContainedCredentialStore: Sendable {
         ]
 
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess { return true }
+        if updateStatus == errSecSuccess {
+            Self.revisions.bump(service)
+            return true
+        }
         guard updateStatus == errSecItemNotFound else { return false }
 
-        return SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil) == errSecSuccess
+        let added = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil) == errSecSuccess
+        if added { Self.revisions.bump(service) }
+        return added
     }
 
     /// Tags a stored credential so a rotation can tell *which* one it's replacing. Hashed
@@ -222,6 +243,21 @@ public struct SelfContainedCredentialStore: Sendable {
         }
     }
 
+    /// Writes a looked-up identity into the item it was looked up for. Goes through the same
+    /// compare-and-swap as a rotation, so a sign-in that replaced `tokens` meanwhile is never
+    /// overwritten (and a signed-out item is never recreated).
+    @discardableResult
+    func recordIdentity(_ identity: ProfileIdentity, replacing tokens: OAuthTokens) -> RotatedSaveResult {
+        let updated = tokens.withIdentity(email: identity.email, organization: identity.organization)
+        let result = saveRotated(updated, replacing: tokens)
+        switch result {
+        case .saved: Self.storeLogger.notice("recorded the sign-in's identity")
+        case .superseded: Self.storeLogger.notice("not recording identity: the sign-in changed meanwhile")
+        case .failed: Self.storeLogger.error("recording the sign-in's identity failed")
+        }
+        return result
+    }
+
     /// Deletes our copy of the token. This does *not* revoke the grant server-side — pair it
     /// with `revokeGrant(refreshToken:)`, as `OAuthLoginController.signOut()` does.
     public func clear() {
@@ -231,6 +267,7 @@ public struct SelfContainedCredentialStore: Sendable {
             kSecAttrAccount as String: account
         ]
         SecItemDelete(query as CFDictionary)
+        Self.revisions.bump(service)
     }
 
     /// Deletes the stored pair only if it is still `tokens`, matched on the same identity
@@ -244,7 +281,9 @@ public struct SelfContainedCredentialStore: Sendable {
             kSecAttrAccount as String: account,
             kSecAttrGeneric as String: Self.identity(of: tokens)
         ]
-        return SecItemDelete(query as CFDictionary) == errSecSuccess
+        let deleted = SecItemDelete(query as CFDictionary) == errSecSuccess
+        if deleted { Self.revisions.bump(service) }
+        return deleted
     }
 
     /// Deletes the stored pair only if its access token is the one that was rejected. The
@@ -288,7 +327,7 @@ public struct SelfContainedCredentialStore: Sendable {
         }
         let refreshed: OAuthTokens
         do {
-            refreshed = try await refresher(tokens.refreshToken, tokens.scope)
+            refreshed = try await refresher(tokens.refreshToken, tokens.scope).carryingIdentity(from: tokens)
         } catch OAuthClient.OAuthError.rejected(let status, OAuthClient.invalidGrant) {
             // Only `invalid_grant` means the refresh token is dead. Any other rejection (a
             // malformed request, a client the gateway briefly refuses) keeps the sign-in and
@@ -325,5 +364,19 @@ public struct SelfContainedCredentialStore: Sendable {
             Self.storeLogger.error("saving the refreshed pair failed")
             throw StoreError.keychainWriteFailed
         }
+    }
+}
+
+/// Per-service sign-in revisions; see `SelfContainedCredentialStore.revision`.
+final class RevisionCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Int] = [:]
+
+    func value(for service: String) -> Int {
+        lock.withLock { values[service, default: 0] }
+    }
+
+    func bump(_ service: String) {
+        lock.withLock { values[service, default: 0] += 1 }
     }
 }

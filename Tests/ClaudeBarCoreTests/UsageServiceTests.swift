@@ -240,3 +240,62 @@ struct SingleFlightTests {
         #expect(try await flight.run { 7 } == 7)
     }
 }
+
+struct UsageServiceAccountTests {
+    @Test("Two services keep separate tokens and fetch with their own")
+    func twoServicesDoNotShareTokens() async throws {
+        let probeA = Probe()
+        let probeB = Probe()
+        func service(_ probe: Probe, token: String) -> UsageService {
+            UsageService(
+                selfContainedToken: { token },
+                claudeCodeToken: { nil },
+                clearSelfContained: { _ in true },
+                fetchUsage: { used in
+                    await probe.fetched(with: used)
+                    return UsageResponse(limits: [])
+                }
+            )
+        }
+
+        _ = try await service(probeA, token: "token-a").fetch(preferSelfContained: true)
+        _ = try await service(probeB, token: "token-b").fetch(preferSelfContained: true)
+
+        #expect(await probeA.usageTokens == ["token-a"])
+        #expect(await probeB.usageTokens == ["token-b"])
+    }
+}
+
+actor RefreshCounter {
+    private(set) var refreshes = 0
+    func refreshed() { refreshes += 1 }
+}
+
+struct UsageServiceSingleFlightTests {
+    @Test("An identity lookup and a usage poll share one token refresh")
+    func identityAndUsageShareOneRefresh() async throws {
+        let counter = RefreshCounter()
+        let tokens = OAuthTokens(
+            accessToken: "fresh", refreshToken: "rt", expiresAt: Date().addingTimeInterval(3600), scope: OAuthConfig.scopes
+        )
+        let service = UsageService(
+            loadSelfContained: { tokens },
+            selfContainedToken: {
+                await counter.refreshed()
+                // Long enough that the second caller arrives while this one is in flight.
+                try await Task.sleep(for: .milliseconds(150))
+                return "fresh"
+            },
+            claudeCodeToken: { nil },
+            clearSelfContained: { _ in true },
+            fetchUsage: { _ in UsageResponse(limits: []) }
+        )
+
+        async let identity = service.selfContainedTokens()
+        async let usage = service.fetch(preferSelfContained: true)
+        let results = try await (identity, usage)
+
+        #expect(results.0?.accessToken == "fresh")
+        #expect(await counter.refreshes == 1)
+    }
+}

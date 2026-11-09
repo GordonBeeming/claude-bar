@@ -106,7 +106,9 @@ public struct OAuthClient: Sendable {
             accessToken: decoded.accessToken,
             refreshToken: decoded.refreshToken,
             expiresAt: Date().addingTimeInterval(decoded.expiresIn),
-            scope: decoded.scope ?? fallbackScope
+            scope: decoded.scope ?? fallbackScope,
+            accountEmail: decoded.account?.emailAddress.flatMap { $0.isEmpty ? nil : $0 },
+            organizationName: decoded.organization?.name.flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 

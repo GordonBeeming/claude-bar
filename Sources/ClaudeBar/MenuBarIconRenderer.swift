@@ -137,9 +137,9 @@ struct MenuBarLabelView: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        let displayedLimit = menuBarLimit(
-            in: model.limits,
-            selectedKey: settings.menuBarPercentageSelection.limitSelectionKey
+        let displayedLimit = model.menuBarLimit(
+            accountSelection: settings.menuBarAccountSelection,
+            limitKey: settings.menuBarPercentageSelection.limitSelectionKey
         )
         Image(nsImage: MenuBarIconRenderer.image(
             // Percent is flipped to remaining in fuel-tank mode; severity stays keyed to
@@ -166,7 +166,7 @@ struct MenuBarLabelView: View {
     private var flameColor: NSColor? {
         guard settings.showMenuBarFlame else { return nil }
         let now = Date()
-        let overPace = model.limits.filter { UsageWindow.isOverPace(for: $0, now: now) }
+        let overPace = model.limitsInScope(settings.menuBarAccountSelection).filter { UsageWindow.isOverPace(for: $0, now: now) }
         guard !overPace.isEmpty else { return nil }
         let weeklyAllOverPace = overPace.contains { $0.kind == "weekly_all" }
         return weeklyAllOverPace ? MenuBarIconRenderer.strongFlameColor : MenuBarIconRenderer.lightFlameColor

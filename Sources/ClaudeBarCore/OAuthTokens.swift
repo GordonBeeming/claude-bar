@@ -13,16 +13,53 @@ public struct OAuthTokens: Codable, Sendable, Equatable {
     public let expiresAt: Date
     /// The server's answer, not our request: it echoes `scope` on both exchange and refresh.
     public let scope: String
+    /// Who signed in, from the token response. Optional because items written earlier have
+    /// none, and the response may leave it out; a missing value never signs anyone out.
+    public let accountEmail: String?
+    public let organizationName: String?
 
-    public init(accessToken: String, refreshToken: String, expiresAt: Date, scope: String) {
+    public init(
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: Date,
+        scope: String,
+        accountEmail: String? = nil,
+        organizationName: String? = nil
+    ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.scope = scope
+        self.accountEmail = accountEmail
+        self.organizationName = organizationName
     }
 
     private enum CodingKeys: String, CodingKey {
-        case accessToken, refreshToken, expiresAt, scope
+        case accessToken, refreshToken, expiresAt, scope, accountEmail, organizationName
+    }
+
+    func withIdentity(email: String?, organization: String?) -> OAuthTokens {
+        OAuthTokens(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            expiresAt: expiresAt,
+            scope: scope,
+            accountEmail: email,
+            organizationName: organization
+        )
+    }
+
+    /// A refresh response usually omits who the token is for, and the same grant is still the
+    /// same person, so the stored identity carries forward.
+    func carryingIdentity(from previous: OAuthTokens) -> OAuthTokens {
+        OAuthTokens(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            expiresAt: expiresAt,
+            scope: scope,
+            accountEmail: accountEmail ?? previous.accountEmail,
+            organizationName: organizationName ?? previous.organizationName
+        )
     }
 
     /// Items written before this field existed have no `scope` key, and a synthesized decode
@@ -34,6 +71,8 @@ public struct OAuthTokens: Codable, Sendable, Equatable {
         refreshToken = try container.decode(String.self, forKey: .refreshToken)
         expiresAt = try container.decode(Date.self, forKey: .expiresAt)
         scope = try container.decodeIfPresent(String.self, forKey: .scope) ?? Self.unknownScope
+        accountEmail = try container.decodeIfPresent(String.self, forKey: .accountEmail)
+        organizationName = try container.decodeIfPresent(String.self, forKey: .organizationName)
     }
 
     /// True when a stored grant isn't exactly what this build asks for: unknown, wider (an old
@@ -56,11 +95,22 @@ struct OAuthTokenResponse: Decodable {
     /// Optional defensively only — the live endpoint sends it on exchange and refresh alike,
     /// but failing sign-in over a field we can substitute would be the wrong trade.
     let scope: String?
+    let account: Account?
+    let organization: Organization?
+
+    struct Account: Decodable {
+        let emailAddress: String?
+        private enum CodingKeys: String, CodingKey { case emailAddress = "email_address" }
+    }
+
+    struct Organization: Decodable {
+        let name: String?
+    }
 
     private enum CodingKeys: String, CodingKey {
         case accessToken = "access_token"
         case refreshToken = "refresh_token"
         case expiresIn = "expires_in"
-        case scope
+        case scope, account, organization
     }
 }

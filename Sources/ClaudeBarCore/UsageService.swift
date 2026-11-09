@@ -10,6 +10,7 @@ public actor UsageService {
         case claudeCode
     }
 
+    private let loadSelfContained: @Sendable () -> OAuthTokens?
     private let selfContainedToken: @Sendable () async throws -> String?
     private let claudeCodeToken: @Sendable () async -> String?
     /// Clears our sign-in only if the given access token is still the stored one, and says
@@ -20,12 +21,16 @@ public actor UsageService {
     /// moment: each refresh spends our single-use refresh token, so they must not both refresh.
     private let tokenFlight = SingleFlight<String?>()
     private let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "UsageService")
+    /// Only for log lines, so a poll of two accounts says which one it served.
+    private let accountID: String
 
-    public init() {
-        let store = SelfContainedCredentialStore()
-        let credentials = CredentialsProvider()
+    public init(account: ClaudeAccount = .standard()) {
+        let store = SelfContainedCredentialStore(account: account)
+        let credentials = CredentialsProvider(account: account)
         let client = UsageClient()
         self.init(
+            accountID: account.id,
+            loadSelfContained: { store.load() },
             selfContainedToken: { try await store.validAccessToken() },
             claudeCodeToken: { credentials.loadAccessToken() },
             clearSelfContained: { store.clear(ifAccessToken: $0) },
@@ -34,11 +39,15 @@ public actor UsageService {
     }
 
     init(
+        accountID: String = ClaudeAccount.defaultID,
+        loadSelfContained: @escaping @Sendable () -> OAuthTokens? = { nil },
         selfContainedToken: @escaping @Sendable () async throws -> String?,
         claudeCodeToken: @escaping @Sendable () async -> String?,
         clearSelfContained: @escaping @Sendable (String) async -> Bool,
         fetchUsage: @escaping @Sendable (String) async throws -> UsageResponse
     ) {
+        self.accountID = accountID
+        self.loadSelfContained = loadSelfContained
         self.selfContainedToken = selfContainedToken
         self.claudeCodeToken = claudeCodeToken
         self.clearSelfContained = clearSelfContained
@@ -58,7 +67,7 @@ public actor UsageService {
                 throw UsageClient.UsageError.noToken
             }
             let response = try await fetchUsage(token)
-            logger.notice("usage served via \(TokenSource.claudeCode.rawValue, privacy: .public)")
+            logger.notice("usage served via \(TokenSource.claudeCode.rawValue, privacy: .public) for account \(self.accountID, privacy: .public)")
             return response
         }
 
@@ -91,7 +100,7 @@ public actor UsageService {
     private func selfContainedTokenOrSignedOut() async throws -> String {
         do {
             guard let token = try await currentSelfContainedToken() else {
-                logger.notice("usage skipped: no self-contained sign-in")
+                logger.notice("usage skipped: no self-contained sign-in for account \(self.accountID, privacy: .public)")
                 throw UsageClient.UsageError.signedOut
             }
             return token
@@ -104,7 +113,7 @@ public actor UsageService {
 
     private func serveSelfContained(_ token: String) async throws -> UsageResponse {
         let response = try await fetchUsage(token)
-        logger.notice("usage served via \(TokenSource.selfContained.rawValue, privacy: .public)")
+        logger.notice("usage served via \(TokenSource.selfContained.rawValue, privacy: .public) for account \(self.accountID, privacy: .public)")
         return response
     }
 
@@ -161,6 +170,20 @@ public actor UsageService {
             logger.notice("account offers skipped: self-contained token unavailable: \(String(describing: error), privacy: .public)")
             return nil
         }
+    }
+
+    /// The stored sign-in after making sure it is fresh, for callers that need more than the
+    /// access token (the identity lookup). The refresh goes through the same single-flight as
+    /// usage and offers, so none of them can spend the refresh token twice. Nil when there is
+    /// no usable sign-in; clearing a rejected one stays with `fetch`.
+    public func selfContainedTokens() async -> OAuthTokens? {
+        do {
+            guard try await currentSelfContainedToken() != nil else { return nil }
+        } catch {
+            logger.notice("self-contained tokens unavailable for account \(self.accountID, privacy: .public): \(String(describing: error), privacy: .public)")
+            return nil
+        }
+        return loadSelfContained()
     }
 
     private func currentSelfContainedToken() async throws -> String? {
