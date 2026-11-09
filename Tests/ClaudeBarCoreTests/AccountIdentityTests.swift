@@ -181,6 +181,21 @@ struct IdentityChangeDetectorTests {
         #expect(unknownOrg.observe(source: "claudeCode", email: "a@b.com", organization: "Org A") == .labelled)
     }
 
+    @Test func anOrganisationSwitchWithNoEmailIsReplaced() {
+        var detector = IdentityChangeDetector(source: "selfContained", email: nil, organization: "Org A")
+        #expect(detector.observe(source: "selfContained", email: nil, organization: "Org B") == .replaced)
+    }
+
+    @Test func anEmailChangeWithNoOrganisationIsReplaced() {
+        var detector = IdentityChangeDetector(source: "claudeCode", email: "a@b.com", organization: nil)
+        #expect(detector.observe(source: "claudeCode", email: "c@d.com", organization: nil) == .replaced)
+    }
+
+    @Test func aKnownFieldChangingAlongsideAnUnknownOneBecomingKnownIsReplaced() {
+        var detector = IdentityChangeDetector(source: "claudeCode", email: nil, organization: "Org A")
+        #expect(detector.observe(source: "claudeCode", email: "a@b.com", organization: "Org B") == .replaced)
+    }
+
     @Test func unknownEmailOnAnotherSourceIsReplaced() {
         var detector = IdentityChangeDetector(source: "claudeCode", email: nil)
         #expect(detector.observe(source: "selfContained", email: "a@b.com") == .replaced)

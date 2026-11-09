@@ -758,6 +758,36 @@ struct AccountTelemetryTests {
     }
 }
 
+struct RetiredAccountPruneTests {
+    @Test func prunesAReservedButUndiscoveredAccountsOldFilesOnly() throws {
+        let directory = try temporaryDirectory()
+        let now = Date()
+        let old = Calendar.current.date(byAdding: .day, value: -400, to: now) ?? now
+        let retired = FileTelemetrySink(directory: directory, serviceName: "claudebar.gone")
+        let active = FileTelemetrySink(directory: directory, serviceName: "claudebar.active")
+        let defaultSink = FileTelemetrySink(directory: directory)
+
+        let retiredOld = directory.appending(path: retired.fileName(kind: "metrics", on: old))
+        let retiredNew = directory.appending(path: retired.fileName(kind: "metrics", on: now))
+        let activeOld = directory.appending(path: active.fileName(kind: "metrics", on: old))
+        let defaultOld = directory.appending(path: defaultSink.fileName(kind: "metrics", on: old))
+        for file in [retiredOld, retiredNew, activeOld, defaultOld] {
+            FileManager.default.createFile(atPath: file.path, contents: Data())
+        }
+
+        let problems = pruneRetiredAccounts(
+            ids: ["gone", "default"], sinks: [.file(directory: directory)], retentionDays: 90, now: now
+        )
+
+        #expect(problems.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: retiredOld.path))
+        #expect(FileManager.default.fileExists(atPath: retiredNew.path))
+        // Accounts not named are left alone, and `default` is never pruned through this path.
+        #expect(FileManager.default.fileExists(atPath: activeOld.path))
+        #expect(FileManager.default.fileExists(atPath: defaultOld.path))
+    }
+}
+
 struct TelemetryStateCleanupTests {
     @Test func optOutSweepRemovesEveryAccountsStateFileAndNothingElse() throws {
         let directory = try temporaryDirectory()

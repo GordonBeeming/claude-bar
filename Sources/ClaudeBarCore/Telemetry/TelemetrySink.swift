@@ -68,6 +68,30 @@ public func makeSinks(
     }
 }
 
+/// Applies retention to accounts that are no longer being stamped (a removed folder, a vanished
+/// one), whose `claudebar.<id>-*.jsonl` files would otherwise never expire. Prune only: nothing
+/// is written. `default` is skipped, since that account is always discovered. Returns problems
+/// for the caller to log; one failing sink never stops the rest.
+public func pruneRetiredAccounts(
+    ids: some Sequence<String>,
+    sinks configs: [TelemetrySinkConfig],
+    retentionDays: Int,
+    now: Date
+) -> [String] {
+    var problems: [String] = []
+    for id in ids where id != ClaudeAccount.defaultID {
+        let serviceName = "\(FileTelemetrySink.defaultServiceName).\(id)"
+        for sink in makeSinks(configs, serviceName: serviceName) {
+            do {
+                try sink.prune(retentionDays: retentionDays, now: now)
+            } catch {
+                problems.append("prune for retired account \(id): \(error.localizedDescription)")
+            }
+        }
+    }
+    return problems
+}
+
 /// Appends OTLP JSON requests, one per line, to daily files named
 /// `<service>-metrics-YYYY-MM-DD.jsonl` and `<service>-logs-YYYY-MM-DD.jsonl`, the layout the
 /// Bar Telemetry Spec defines. It's also what the OpenTelemetry Collector's `otlpjsonfile`

@@ -217,6 +217,18 @@ final class TelemetryController {
             guard !Task.isCancelled else { return }
             await stamp(account, settings: settings)
         }
+        pruneRetiredAccounts(model: model, settings: settings)
+    }
+
+    /// Retention for reserved account ids that aren't being stamped any more.
+    private func pruneRetiredAccounts(model: UsageViewModel, settings: AppSettings) {
+        let config = settings.telemetryConfig
+        guard config.enabled, let retentionDays = config.retentionDays else { return }
+        let active = Set(model.accounts.map(\.id))
+        let retired = Set(settings.accountIDsByPath.values).subtracting(active)
+        for problem in ClaudeBarCore.pruneRetiredAccounts(ids: retired, sinks: config.sinks, retentionDays: retentionDays, now: Date()) {
+            logger.error("telemetry: \(problem, privacy: .private)")
+        }
     }
 
     private func stamp(_ account: AccountUsageModel, settings: AppSettings) async {

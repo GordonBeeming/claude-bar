@@ -54,7 +54,11 @@ public struct IdentityChangeDetector: Sendable, Equatable {
     /// offers. It is only "labelling" when what was unknown becomes known.
     public mutating func observe(source newSource: String, email newEmail: String?, organization newOrganization: String? = nil) -> Change {
         guard newSource != source || newEmail != email || newOrganization != organization else { return .none }
-        let labelling = newSource == source && (email == nil || (newEmail == email && organization == nil))
+        // Labelling only when every field that changed went from unknown to known; a known value
+        // that now differs is someone or somewhere else.
+        let labelling = newSource == source
+            && (email == newEmail || email == nil)
+            && (organization == newOrganization || organization == nil)
         source = newSource
         email = newEmail
         organization = newOrganization
