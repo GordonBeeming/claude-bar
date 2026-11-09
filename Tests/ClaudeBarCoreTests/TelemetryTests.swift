@@ -682,6 +682,216 @@ struct FileTelemetrySinkTests {
     }
 }
 
+struct AccountTelemetryTests {
+    private func request(_ resource: OTLP.Resource) -> OTLP.MetricsRequest {
+        OTLP.MetricsRequest(
+            resource: resource,
+            scope: .init(name: "t", version: "1"),
+            metrics: [.init(name: "m", unit: "1", description: "", kind: .gauge, dataPoints: [.init(attributes: [], time: Date(), value: .int(1))])]
+        )
+    }
+
+    @Test func nonDefaultSinkWritesItsOwnPrefix() throws {
+        let directory = try temporaryDirectory()
+        let now = Date()
+        let sink = FileTelemetrySink(directory: directory, serviceName: "claudebar.acme")
+        try sink.export(metrics: request(.init(attributes: [])), at: now)
+
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(names.count == 1)
+        let name = try #require(names.first)
+        #expect(name.hasPrefix("claudebar.acme-metrics-"))
+        #expect(name.wholeMatch(of: /claudebar\.acme-metrics-\d{4}-\d{2}-\d{2}\.jsonl/) != nil)
+        #expect(sink.fileName(kind: "logs", on: now).hasPrefix("claudebar.acme-logs-"))
+    }
+
+    @Test func defaultPruneLeavesOtherAccountsFilesAlone() throws {
+        let directory = try temporaryDirectory()
+        let now = Date()
+        let old = Calendar.current.date(byAdding: .day, value: -400, to: now) ?? now
+        let defaultSink = FileTelemetrySink(directory: directory)
+        let otherSink = FileTelemetrySink(directory: directory, serviceName: "claudebar.acme")
+
+        let defaultOld = directory.appending(path: defaultSink.fileName(kind: "metrics", on: old))
+        let otherOld = directory.appending(path: otherSink.fileName(kind: "metrics", on: old))
+        for file in [defaultOld, otherOld] {
+            FileManager.default.createFile(atPath: file.path, contents: Data())
+        }
+
+        try defaultSink.prune(retentionDays: 90, now: now)
+        #expect(!FileManager.default.fileExists(atPath: defaultOld.path))
+        #expect(FileManager.default.fileExists(atPath: otherOld.path))
+        #expect(defaultSink.date(fromFileName: otherOld.lastPathComponent) == nil)
+
+        try otherSink.prune(retentionDays: 90, now: now)
+        #expect(!FileManager.default.fileExists(atPath: otherOld.path))
+    }
+
+    @Test func resourceCarriesAccountIDInTheWrittenLine() throws {
+        let directory = try temporaryDirectory()
+        let now = Date()
+        var account = ClaudeAccount(
+            id: "acme",
+            configDir: URL(filePath: "/Users/x/.claude-accounts/acme", directoryHint: .isDirectory),
+            isDefault: false,
+            profileURL: URL(filePath: "/unused"),
+            email: "someone@acme.example"
+        )
+        let sink = FileTelemetrySink(directory: directory, serviceName: account.telemetryFileServiceName)
+        try sink.export(metrics: request(account.telemetryResource(version: "1", hostName: "h")), at: now)
+
+        let file = directory.appending(path: sink.fileName(kind: "metrics", on: now))
+        let object = try jsonObject(Data(try String(contentsOf: file, encoding: .utf8).utf8))
+        let resourceMetrics = try #require((object["resourceMetrics"] as? [[String: Any]])?.first)
+        let resource = try #require(resourceMetrics["resource"] as? [String: Any])
+        let attributes = try #require(resource["attributes"] as? [[String: Any]])
+        func string(_ key: String) -> String? {
+            let match = attributes.first { $0["key"] as? String == key }
+            return (match?["value"] as? [String: Any])?["stringValue"] as? String
+        }
+        #expect(string("account.id") == "acme")
+        #expect(string("account.name") == "someone@acme.example")
+        #expect(string("service.name") == "claudebar")
+
+        account.email = nil
+        #expect(!account.telemetryResource(version: "1", hostName: "h").attributes.contains { $0.key == "account.name" })
+    }
+}
+
+struct RetiredAccountPruneTests {
+    @Test func prunesAReservedButUndiscoveredAccountsOldFilesOnly() throws {
+        let directory = try temporaryDirectory()
+        let now = Date()
+        let old = Calendar.current.date(byAdding: .day, value: -400, to: now) ?? now
+        let retired = FileTelemetrySink(directory: directory, serviceName: "claudebar.gone")
+        let active = FileTelemetrySink(directory: directory, serviceName: "claudebar.active")
+        let defaultSink = FileTelemetrySink(directory: directory)
+
+        let retiredOld = directory.appending(path: retired.fileName(kind: "metrics", on: old))
+        let retiredNew = directory.appending(path: retired.fileName(kind: "metrics", on: now))
+        let activeOld = directory.appending(path: active.fileName(kind: "metrics", on: old))
+        let defaultOld = directory.appending(path: defaultSink.fileName(kind: "metrics", on: old))
+        for file in [retiredOld, retiredNew, activeOld, defaultOld] {
+            FileManager.default.createFile(atPath: file.path, contents: Data())
+        }
+
+        let problems = pruneRetiredAccounts(
+            ids: ["gone", "default"], sinks: [.file(directory: directory)], retentionDays: 90, now: now
+        )
+
+        #expect(problems.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: retiredOld.path))
+        #expect(FileManager.default.fileExists(atPath: retiredNew.path))
+        // Accounts not named are left alone, and `default` is never pruned through this path.
+        #expect(FileManager.default.fileExists(atPath: activeOld.path))
+        #expect(FileManager.default.fileExists(atPath: defaultOld.path))
+    }
+}
+
+struct TelemetryStateCleanupTests {
+    @Test func optOutSweepRemovesEveryAccountsStateFileAndNothingElse() throws {
+        let directory = try temporaryDirectory()
+        let names = ["telemetry-state.json", "telemetry-state.acme.json", "telemetry-state.work-2.json"]
+        let keep = ["notes.txt", "telemetry-state.bak", "telemetry-state.Bad_Id.json", "other.json"]
+        for name in names + keep {
+            FileManager.default.createFile(atPath: directory.appending(path: name).path, contents: Data("{}".utf8))
+        }
+
+        let removed = try TelemetryRecorder.removeAllStateFiles(in: directory)
+
+        #expect(Set(removed) == Set(names))
+        let left = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(Set(left) == Set(keep))
+    }
+
+    @Test func sweepOfAMissingFolderIsEmpty() throws {
+        let missing = try temporaryDirectory().appending(path: "nope", directoryHint: .isDirectory)
+        #expect(try TelemetryRecorder.removeAllStateFiles(in: missing).isEmpty)
+    }
+
+    @Test func adoptingADifferentOwnerClearsObservationsButKeepsTheBaseline() async throws {
+        let base = try temporaryDirectory()
+        let transcripts = base.appending(path: "projects", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: transcripts, withIntermediateDirectories: true)
+        let stateURL = base.appending(path: "state.json")
+        func makeRecorder() -> TelemetryRecorder {
+            TelemetryRecorder(
+                stateURL: stateURL,
+                scanner: TranscriptTokenScanner(root: transcripts),
+                resource: .init(attributes: []),
+                scope: .init(name: "t", version: "1")
+            )
+        }
+        func state() throws -> [String: Any] { try jsonObject(Data(contentsOf: stateURL)) }
+        let now = Date()
+        let usage = UsageResponse(limits: [limit("weekly_all", group: "weekly", percent: 40, resetsAt: now.addingTimeInterval(3600))])
+
+        let first = makeRecorder()
+        #expect(await first.adopt(owner: "claudeCode|a@b.com").isEmpty)
+        _ = await first.stamp(
+            usage: usage, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: base.appending(path: "out"))],
+            retentionDays: nil, intervalMinutes: 5, now: now
+        )
+        #expect(try state()["observed"] != nil)
+        #expect(try state()["scan"] != nil)
+        #expect(try state()["owner"] as? String == "claudeCode|a@b.com")
+
+        // A relaunch with the same owner keeps what was observed.
+        #expect(await makeRecorder().adopt(owner: "claudeCode|a@b.com").isEmpty)
+        #expect(try state()["observed"] != nil)
+
+        // A different person while the app was closed: observations go, the baseline stays.
+        #expect(await makeRecorder().adopt(owner: "claudeCode|c@d.com").isEmpty)
+        #expect(try state()["observed"] == nil)
+        #expect(try state()["scan"] != nil)
+        #expect(try state()["owner"] as? String == "claudeCode|c@d.com")
+    }
+
+    @Test func forceClearDropsObservationsEvenForTheSameOwner() async throws {
+        let base = try temporaryDirectory()
+        let stateURL = base.appending(path: "state.json")
+        let recorder = TelemetryRecorder(
+            stateURL: stateURL,
+            scanner: TranscriptTokenScanner(root: base),
+            resource: .init(attributes: []),
+            scope: .init(name: "t", version: "1")
+        )
+        let now = Date()
+        let usage = UsageResponse(limits: [limit("weekly_all", group: "weekly", percent: 40, resetsAt: now.addingTimeInterval(3600))])
+        _ = await recorder.adopt(owner: "selfContained|")
+        _ = await recorder.stamp(
+            usage: usage, offers: AccountOffers(), sinks: [FileTelemetrySink(directory: base.appending(path: "out"))],
+            retentionDays: nil, intervalMinutes: 5, now: now
+        )
+        func state() throws -> [String: Any] { try jsonObject(Data(contentsOf: stateURL)) }
+        #expect(try state()["observed"] != nil)
+
+        _ = await recorder.adopt(owner: "selfContained|")
+        #expect(try state()["observed"] != nil)
+
+        _ = await recorder.adopt(owner: "selfContained|", forceClear: true)
+        #expect(try state()["observed"] == nil)
+        #expect(try state()["scan"] != nil)
+    }
+
+    @Test func stateWithoutAnOwnerIsTreatedAsUnknown() async throws {
+        let base = try temporaryDirectory()
+        let stateURL = base.appending(path: "state.json")
+        let legacy = #"{"specVersion":"1","observed":{"limits":[],"offers":{}}}"#
+        try Data(legacy.utf8).write(to: stateURL)
+        let recorder = TelemetryRecorder(
+            stateURL: stateURL,
+            scanner: TranscriptTokenScanner(root: base),
+            resource: .init(attributes: []),
+            scope: .init(name: "t", version: "1")
+        )
+        _ = await recorder.adopt(owner: "selfContained|a@b.com")
+        let object = try jsonObject(Data(contentsOf: stateURL))
+        #expect(object["observed"] == nil)
+        #expect(object["owner"] as? String == "selfContained|a@b.com")
+    }
+}
+
 // MARK: - Recorder end to end
 
 struct TelemetryRecorderTests {

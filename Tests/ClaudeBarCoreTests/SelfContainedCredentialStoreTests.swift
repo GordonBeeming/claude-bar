@@ -294,6 +294,24 @@ struct SelfContainedCredentialStoreTests {
         #expect(store.isSignedIn)
     }
 
+    @Test(.enabled(if: keychainAvailable))
+    func revisionMovesOnSaveAndClearButNotOnARotation() {
+        let service = "com.gordonbeeming.ClaudeBar.tests.revision"
+        let store = Self.store(service)
+        defer { store.clear() }
+
+        let start = store.revision
+        let first = Self.tokens(scope: OAuthConfig.scopes)
+        #expect(store.save(first))
+        #expect(store.revision == start + 1)
+
+        #expect(store.saveRotated(Self.rotated(from: first), replacing: first) == .saved)
+        #expect(store.revision == start + 1)
+
+        store.clear()
+        #expect(store.revision == start + 2)
+    }
+
     private static func rotated(from previous: OAuthTokens) -> OAuthTokens {
         OAuthTokens(
             accessToken: "rotated-at",

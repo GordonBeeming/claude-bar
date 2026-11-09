@@ -29,11 +29,14 @@ final class OAuthLoginController {
     /// the exchange succeeds so a stale code can't be replayed.
     @ObservationIgnored private var pending: (pkce: PKCE, state: String)?
 
-    private let store = SelfContainedCredentialStore()
+    private let store: SelfContainedCredentialStore
+    private let accountID: String
     private let client = OAuthClient()
     private let logger = Logger(subsystem: "com.gordonbeeming.ClaudeBar", category: "OAuthLogin")
 
-    init() {
+    init(account: ClaudeAccount) {
+        store = SelfContainedCredentialStore(account: account)
+        accountID = account.id
         phase = .signedOut
         resync()
     }
@@ -112,7 +115,7 @@ final class OAuthLoginController {
             }
             self.pending = nil
             phase = .signedIn(expiresAt: tokens.expiresAt)
-            logger.notice("self-contained sign-in succeeded")
+            logger.notice("self-contained sign-in succeeded for account \(self.accountID, privacy: .public)")
         } catch {
             phase = .failed(Self.message(for: error))
             logger.error("self-contained sign-in failed: \(String(describing: error), privacy: .public)")
@@ -149,5 +152,20 @@ final class OAuthLoginController {
         default:
             return "Sign-in failed: \(error.localizedDescription)"
         }
+    }
+}
+
+/// Holds one sign-in controller per account, so Settings keeps a flow in progress (an opened
+/// browser, a half-typed code) while the list is redrawn.
+@MainActor
+@Observable
+final class AccountLoginControllers {
+    @ObservationIgnored private var controllers: [String: OAuthLoginController] = [:]
+
+    func controller(for account: ClaudeAccount) -> OAuthLoginController {
+        if let existing = controllers[account.id] { return existing }
+        let created = OAuthLoginController(account: account)
+        controllers[account.id] = created
+        return created
     }
 }

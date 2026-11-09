@@ -55,12 +55,41 @@ public protocol TelemetrySink: Sendable {
     func prune(retentionDays: Int, now: Date) throws
 }
 
-public func makeSinks(_ configs: [TelemetrySinkConfig]) -> [any TelemetrySink] {
+/// `serviceName` is what an account's files are prefixed with, so accounts sharing a folder
+/// keep separate files.
+public func makeSinks(
+    _ configs: [TelemetrySinkConfig],
+    serviceName: String = FileTelemetrySink.defaultServiceName
+) -> [any TelemetrySink] {
     configs.map { config in
         switch config {
-        case .file(let directory): FileTelemetrySink(directory: directory)
+        case .file(let directory): FileTelemetrySink(directory: directory, serviceName: serviceName)
         }
     }
+}
+
+/// Applies retention to accounts that are no longer being stamped (a removed folder, a vanished
+/// one), whose `claudebar.<id>-*.jsonl` files would otherwise never expire. Prune only: nothing
+/// is written. `default` is skipped, since that account is always discovered. Returns problems
+/// for the caller to log; one failing sink never stops the rest.
+public func pruneRetiredAccounts(
+    ids: some Sequence<String>,
+    sinks configs: [TelemetrySinkConfig],
+    retentionDays: Int,
+    now: Date
+) -> [String] {
+    var problems: [String] = []
+    for id in ids where id != ClaudeAccount.defaultID {
+        let serviceName = "\(FileTelemetrySink.defaultServiceName).\(id)"
+        for sink in makeSinks(configs, serviceName: serviceName) {
+            do {
+                try sink.prune(retentionDays: retentionDays, now: now)
+            } catch {
+                problems.append("prune for retired account \(id): \(error.localizedDescription)")
+            }
+        }
+    }
+    return problems
 }
 
 /// Appends OTLP JSON requests, one per line, to daily files named

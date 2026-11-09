@@ -9,6 +9,9 @@ struct TelemetryState: Codable, Sendable, Equatable {
     /// The spec version this state was written under. Missing in state saved before the Bar
     /// Telemetry Spec, which is how an upgraded install is told apart from a new one.
     var specVersion: String? = TelemetryStamp.specVersion
+    /// Whose limits and offers `observed` holds (credential source and email). Missing in older
+    /// state, which counts as unknown: observations of an unknown owner are not trusted.
+    var owner: String?
 
     /// State from before the spec was counting already but never wrote the start event Bar UI
     /// needs, so one is owed for the count's original start time.
@@ -158,6 +161,43 @@ public actor TelemetryRecorder {
         if FileManager.default.fileExists(atPath: stateURL.path) {
             try FileManager.default.removeItem(at: stateURL)
         }
+    }
+
+    /// Records who the observations belong to. When the persisted owner differs, or was never
+    /// recorded, the observed limits and offers are cleared and the token baseline kept: the
+    /// next stamp must not diff one person's usage against another's, or fall back to their
+    /// offers, including when the sign-in changed while the app was closed.
+    /// `forceClear` drops the observations even when the owner matches, for a new sign-in that
+    /// reads as the same owner (no email known on either side).
+    public func adopt(owner: String, forceClear: Bool = false) -> [String] {
+        var report = TelemetryStampReport()
+        var state = loadState(report: &report)
+        guard state.owner != owner || forceClear else { return report.problems }
+        state.observed = nil
+        state.owner = owner
+        self.state = state
+        do {
+            try save(state)
+        } catch {
+            report.problems.append("state save failed: \(error.localizedDescription)")
+        }
+        return report.problems
+    }
+
+    /// Deletes every account's state file (`telemetry-state.json` and `telemetry-state.<id>.json`)
+    /// in `directory`, including those of accounts that are no longer discovered, so a folder
+    /// that comes back later starts a fresh baseline instead of resuming an old cursor.
+    @discardableResult
+    public static func removeAllStateFiles(in directory: URL) throws -> [String] {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: directory.path) else { return [] }
+        var removed: [String] = []
+        for name in try fileManager.contentsOfDirectory(atPath: directory.path)
+        where name.wholeMatch(of: /telemetry-state(\.[a-z0-9-]+)?\.json/) != nil {
+            try fileManager.removeItem(at: directory.appending(path: name))
+            removed.append(name)
+        }
+        return removed
     }
 
     private func loadState(report: inout TelemetryStampReport) -> TelemetryState {

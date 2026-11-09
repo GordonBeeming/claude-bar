@@ -6,7 +6,13 @@ import Security
 /// never touches the refresh token, since rotating credentials that belong to
 /// another tool isn't this app's job.
 public struct CredentialsProvider: Sendable {
-    public init() {}
+    private let keychainService: String
+    private let credentialsFile: URL
+
+    public init(account: ClaudeAccount = .standard()) {
+        self.keychainService = account.keychainService
+        self.credentialsFile = account.credentialsFileURL
+    }
 
     /// - Important: Call off the main actor. `SecItemCopyMatching` can block on a
     ///   Keychain consent dialog the first time this app requests the item.
@@ -20,7 +26,7 @@ public struct CredentialsProvider: Sendable {
     private func loadFromKeychain() -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Claude Code-credentials",
+            kSecAttrService as String: keychainService,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -35,9 +41,7 @@ public struct CredentialsProvider: Sendable {
     }
 
     private func loadFromCredentialsFile() -> String? {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: ".claude/.credentials.json")
-        guard let data = try? Data(contentsOf: url) else {
+        guard let data = try? Data(contentsOf: credentialsFile) else {
             return nil
         }
         return accessToken(from: data)
