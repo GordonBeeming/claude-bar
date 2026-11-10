@@ -55,6 +55,13 @@ struct UsageMenuView: View {
 
                     Spacer()
 
+                    Text(AppVersion.currentShort)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help(AppVersion.currentDisplay)
+
+                    Spacer()
+
                     Button("Quit") {
                         NSApp.terminate(nil)
                     }
