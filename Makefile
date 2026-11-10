@@ -7,8 +7,16 @@
 # way every time, so the grant survives rebuilds and you're only prompted once.
 CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Apple Development/{print $$2; exit}')
 
-VERSION ?= 1.0.0
 BUILD ?= 1
+# CI passes VERSION (and BUILD) for a release. Without it this is a local build: the version is
+# the last tag, and the display string says so and names the commit, so a dev build can't pass
+# for a release.
+ifeq ($(origin VERSION),undefined)
+VERSION := $(or $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//'),0.0)
+DISPLAY_VERSION := $(VERSION)-dev ($(or $(shell git rev-parse --short HEAD 2>/dev/null),unknown))
+else
+DISPLAY_VERSION := $(VERSION) ($(BUILD))
+endif
 CODESIGN_OPTS ?=
 
 # Install over the Homebrew cask's location so a local dev build replaces the
@@ -33,6 +41,7 @@ bundle: build
 	/usr/libexec/PlistBuddy \
 		-c "Set :CFBundleShortVersionString $(VERSION)" \
 		-c "Set :CFBundleVersion $(VERSION).$(BUILD)" \
+		-c "Add :GBDisplayVersion string $(DISPLAY_VERSION)" \
 		$(APP_BUNDLE)/Contents/Info.plist
 	IDENT="$(CODESIGN_IDENTITY)"; [ -n "$$IDENT" ] || IDENT="-"; \
 	codesign --force --sign "$$IDENT" --identifier com.gordonbeeming.ClaudeBar $(CODESIGN_OPTS) $(APP_BUNDLE)

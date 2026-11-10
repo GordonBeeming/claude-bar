@@ -162,6 +162,13 @@ struct SettingsView: View {
                     .disabled(!model.launchAtLoginAvailable)
                     .help(model.launchAtLoginAvailable ? "" : "Available when installed as ClaudeBar.app")
             }
+
+            Section("About") {
+                LabeledContent("Version") {
+                    Text(AppVersion.currentDisplay)
+                        .textSelection(.enabled)
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 380)
